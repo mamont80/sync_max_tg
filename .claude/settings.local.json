@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(dotnet --list-sdks; Write-Output \"-----\"; dotnet --version)",
+      "PowerShell(dotnet build *)",
+      "Bash(dotnet build *)",
+      "Bash(xargs -I{} sh -c 'echo === {} ===; cat {}')",
+      "WebSearch",
+      "WebFetch(domain:habr.com)",
+      "Bash(timeout 20 dotnet run --project src/SyncMax)",
+      "Bash(timeout 25 dotnet run)",
+      "Read(//etc/**)",
+      "Read(//etc/ssl/**)",
+      "Bash(mkdir -p /c/sync_max/src/SyncMax/Certificates)",
+      "Bash(curl -fsSL -o russian_trusted_root_ca.cer https://gu-st.ru/content/Other/doc/russian_trusted_root_ca.cer)",
+      "Bash(curl -fsSL -o russian_trusted_sub_ca.cer https://gu-st.ru/content/Other/doc/russian_trusted_sub_ca.cer)",
+      "Bash(openssl x509 *)",
+      "Bash(openssl s_client -connect platform-api2.max.ru:443 -servername platform-api2.max.ru -showcerts)",
+      "Bash(openssl s_client -connect platform-api2.max.ru:443 -servername platform-api2.max.ru -CAfile bundle.pem)",
+      "Bash(timeout 20 dotnet run --no-build)",
+      "Bash(timeout 40 dotnet run --no-build)",
+      "Bash(python3 -c ' *)",
+      "Bash(python -c \"print\\('hi'\\)\")",
+      "Bash(cd *)",
+      "Bash(powershell -NoProfile -Command \"Get-Process -Id 26320 -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, Path, StartTime\")",
+      "Bash(powershell -NoProfile -Command 'Get-Process | Where-Object { $_.ProcessName -match '\\\\''dotnet|SyncMax'\\\\'' } | Select-Object Id, ProcessName, StartTime')",
+      "PowerShell(Stop-Process *)",
+      "Bash(powershell -NoProfile -Command \"Get-Process -Id 26320 -ErrorAction SilentlyContinue | Select-Object Id\")",
+      "Bash(tasklist //FI \"IMAGENAME eq SyncMax.exe\")",
+      "Bash(timeout 10 dotnet run --no-build)",
+      "Bash(timeout 8 ./SyncMax.exe)",
+      "Bash(wait)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

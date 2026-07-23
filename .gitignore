@@ -1,0 +1,21 @@
+## Build results
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+
+## SQLite database files (local runtime data)
+*.db
+*.db-shm
+*.db-wal
+
+## VS / Rider / user files
+.vs/
+.idea/
+*.user
+*.suo
+
+## Local secrets overrides
+appsettings.*.local.json
+appsettings.json

@@ -1,0 +1,18 @@
+# —борка и бинарники
+bin/
+src/SyncMax/bin/
+obj/
+src/SyncMax/obj/
+*.suo
+*.user
+
+# ѕакеты
+packages/
+.nuget/
+
+# Ћокальные настройки и логи
+.idea/
+.vscode/
+.vs/
+*.log
+img/
