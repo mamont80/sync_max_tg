@@ -32,12 +32,14 @@ public sealed class MessageRelayService
     /// <paramref name="messenger"/>) в связанный чат второго мессенджера, если такая
     /// активная связка есть и её направление (<see cref="RepostDirection"/>) это разрешает.
     /// Если связки нет — тихо ничего не делает (это обычный незнакомый чат, не ошибка).
+    /// Форматирование передаётся платформо-независимо (<see cref="FormattedText"/>): вызывающий
+    /// *BotService разобрал СВОЙ формат в участки, а целевой клиент закодирует их в СВОЙ.
     /// Решение, стоит ли вообще звать этот метод для сообщения от бота (не только своего,
     /// но и любого чужого), принимает вызывающий *BotService — у него есть данные конкретной
     /// платформы об отправителе, а этот сервис от платформы не зависит.
     /// </summary>
     public async Task RelayTextAsync(
-        MessengerType messenger, string chatId, string? senderName, string text, CancellationToken ct)
+        MessengerType messenger, string chatId, string? senderName, FormattedText body, CancellationToken ct)
     {
         var link = await _chatLinks.FindActiveByChatAsync(messenger, chatId, ct);
         if (link is null || !AllowsDirection(link, messenger))
@@ -52,7 +54,7 @@ public sealed class MessageRelayService
             return;
         }
 
-        var payload = $"{BuildHeader(messenger, senderName)}\n{text}";
+        var payload = body.WithPrefix($"{BuildHeader(messenger, senderName)}\n");
         await client.SendChatTextAsync(targetChatId, payload, ct);
 
         _logger.LogInformation("Переслано сообщение {FromMessenger}:{FromChatId} -> {ToMessenger}:{ToChatId}.",

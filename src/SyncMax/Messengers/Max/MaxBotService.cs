@@ -129,7 +129,8 @@ public sealed class MaxBotService : BackgroundService
             {
                 // Сообщения от ботов (не только от себя самого, но и от любых других
                 // ботов в чате) не пересылаем — это не пользовательский контент.
-                await _relay.RelayTextAsync(MessengerType.Max, chatId2.ToString(), message.Sender.Name, groupText, ct);
+                var body = MaxFormatting.ToFormattedText(message.Body);
+                await _relay.RelayTextAsync(MessengerType.Max, chatId2.ToString(), message.Sender.Name, body, ct);
             }
         }
     }

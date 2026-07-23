@@ -47,10 +47,19 @@ public sealed class TelegramApiClient : IMessengerApiClient
 
     /// <summary>
     /// В Telegram Bot API id пользователя и id чата/группы — одно адресное пространство
-    /// (chat_id), поэтому отправка в группу ничем не отличается от личного сообщения.
+    /// (chat_id). Форматирование передаётся через entities (без parse_mode и экранирования).
     /// </summary>
-    public Task SendChatTextAsync(string chatId, string text, CancellationToken ct) =>
-        SendTextAsync(chatId, text, ct);
+    public async Task SendChatTextAsync(string chatId, FormattedText content, CancellationToken ct)
+    {
+        if (BotClient is not { } bot)
+        {
+            _logger.LogWarning("Telegram: клиент не инициализирован, сообщение не отправлено.");
+            return;
+        }
+
+        await bot.SendMessage(
+            long.Parse(chatId), content.Text, entities: TelegramFormatting.ToEntities(content), cancellationToken: ct);
+    }
 
     /// <summary>
     /// Единая точка формирования читаемого имени пользователя Telegram: "{FirstName} {LastName}",

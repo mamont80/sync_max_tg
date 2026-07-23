@@ -151,7 +151,8 @@ public sealed class TelegramBotService : BackgroundService
                     // Сообщения от ботов (не только от себя самого, но и от любых других
                     // ботов в группе) не пересылаем — это не пользовательский контент.
                     var senderName = TelegramApiClient.BuildDisplayName(message.From);
-                    await _relay.RelayTextAsync(MessengerType.Telegram, chatId, senderName, groupText, ct);
+                    var body = TelegramFormatting.ToFormattedText(groupText, message.Entities);
+                    await _relay.RelayTextAsync(MessengerType.Telegram, chatId, senderName, body, ct);
                 }
             }
         }

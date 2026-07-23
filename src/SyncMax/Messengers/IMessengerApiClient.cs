@@ -21,8 +21,12 @@ public interface IMessengerApiClient
 
     Task SendTextAsync(string userId, string text, CancellationToken ct);
 
-    /// <summary>Отправка текста в групповой чат/канал по его id — для пересылки между связанными чатами.</summary>
-    Task SendChatTextAsync(string chatId, string text, CancellationToken ct);
+    /// <summary>
+    /// Отправка форматированного текста в групповой чат/канал по его id — для пересылки
+    /// между связанными чатами. Разметку каждый клиент кодирует по-своему (Telegram —
+    /// entities, MAX — markdown), исходя из платформо-независимого <see cref="FormattedText"/>.
+    /// </summary>
+    Task SendChatTextAsync(string chatId, FormattedText content, CancellationToken ct);
 
     // Изображения/файлы/видео добавятся сюда по мере реализации в конкретных
     // клиентах (для MAX пока не описан upload-flow вложений в Bot API).

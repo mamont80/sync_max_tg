@@ -46,12 +46,36 @@
 Как только между чатами есть активная связка (`chat_links`, `active = 1`),
 `MessageRelayService` пересылает в связанный чат каждое текстовое сообщение
 (кроме `/link`), пришедшее в один из связанных чатов, — если направление
-(`repost_type`) это разрешает. Сообщение подписывается именем отправителя:
-`{Имя}: {текст}`. Пока поддерживаются только текстовые сообщения — фото,
-файлы и т.д. не пересылаются.
+(`repost_type`) это разрешает. Сообщение предваряется служебной «шапкой» с
+именем отправителя и меткой источника, а сам текст идёт с новой строки:
+
+```
+👤 {Имя} · (из TG)
+{текст}
+```
+
+Пока поддерживаются только текстовые сообщения — фото, файлы и т.д. не пересылаются.
 
 Сообщения, отправленные самим ботом (в т.ч. пересланные им же), не
 обрабатываются повторно — иначе связка при направлении `both` зациклилась бы.
+
+### Форматирование
+
+Разметка текста (жирный, курсив, подчёркнутый, зачёркнутый, моноширинный,
+ссылки) переносится между платформами через платформо-независимую модель
+`FormattedText` (чистый текст + список участков `TextSpan` с офсетами в UTF-16):
+
+- **Приём.** Каждый `*BotService` конвертирует свой формат в `FormattedText`:
+  Telegram — из `MessageEntity[]` (`TelegramFormatting`), MAX — из массива
+  `markup` (`MaxFormatting`).
+- **Отправка.** Целевой клиент кодирует `FormattedText` в свой формат:
+  Telegram — обратно в entities (без `parse_mode`, без экранирования),
+  MAX — в markdown-строку с `format: "markdown"` (спецсимволы экранируются).
+
+Стили, у которых нет пары на другой стороне (spoiler/blockquote/mention у
+Telegram; heading/highlighted/user_mention у MAX), при переносе отбрасываются —
+текст остаётся, стиль теряется. Само форматирование по разметке (`FormattedText`)
+не зависит от `*BotService`, как и весь `MessageRelayService`.
 
 Сообщения от ботов вообще (не только от своего, но и от любых чужих ботов в
 чате) не пересылаются — это решает каждый `*BotService` сам, до вызова
@@ -141,7 +165,8 @@ src/SyncMax/
   Program.cs                    — хост, DI, запуск миграций и ботов
   appsettings.json              — токены и настройки (ключи пустые)
   Configuration/                — классы опций
-  Models/                       — User, MessengerType, ChatLink, ChatKind, RepostDirection
+  Models/                       — User, MessengerType, ChatLink, ChatKind, RepostDirection,
+                                   FormattedText (универсальная модель разметки)
   Data/
     SqliteConnectionFactory.cs
     Migrations/                 — IMigration, MigrationRunner, M001..M003
@@ -150,8 +175,10 @@ src/SyncMax/
                                    SystemCommandService, CodeGenerator, Localization
   Messengers/
     IMessengerApiClient.cs      — общий интерфейс клиента (отправка текста/медиа)
-    Telegram/                   — TelegramApiClient (отправка), TelegramBotService (приём)
-    Max/                        — MaxApiClient (отправка), MaxBotService (приём), MaxModels
+    Telegram/                   — TelegramApiClient (отправка), TelegramBotService (приём),
+                                   TelegramFormatting (entities ↔ FormattedText)
+    Max/                        — MaxApiClient (отправка), MaxBotService (приём), MaxModels,
+                                   MaxFormatting (markup/markdown ↔ FormattedText)
 ```
 
 ## Заметки

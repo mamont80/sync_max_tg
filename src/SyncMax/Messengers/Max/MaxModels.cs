@@ -89,6 +89,33 @@ public sealed class MaxMessageBody
 {
     [JsonPropertyName("text")]
     public string? Text { get; set; }
+
+    /// <summary>
+    /// Разметка текста (жирный/курсив/ссылка и т.п.) — массив участков с офсетами.
+    /// В MAX форматирование приходит отдельным списком, а не встроенным в text
+    /// (в отличие от исходящего markdown, см. <see cref="MaxSendMessageRequest.Format"/>).
+    /// </summary>
+    [JsonPropertyName("markup")]
+    public List<MaxMarkupElement>? Markup { get; set; }
+}
+
+/// <summary>Один участок разметки входящего сообщения MAX (см. MarkupElement в Bot API).</summary>
+public sealed class MaxMarkupElement
+{
+    /// <summary>"strong" | "emphasized" | "monospaced" | "link" | "strikethrough" | "underline" | "heading" | "highlighted" | "user_mention".</summary>
+    [JsonPropertyName("type")]
+    public string? Type { get; set; }
+
+    /// <summary>Начальный индекс участка в тексте (zero-based, единицы UTF-16).</summary>
+    [JsonPropertyName("from")]
+    public int From { get; set; }
+
+    [JsonPropertyName("length")]
+    public int Length { get; set; }
+
+    /// <summary>URL — только для type == "link".</summary>
+    [JsonPropertyName("url")]
+    public string? Url { get; set; }
 }
 
 /// <summary>Тело запроса на отправку сообщения.</summary>
@@ -96,4 +123,13 @@ public sealed class MaxSendMessageRequest
 {
     [JsonPropertyName("text")]
     public string Text { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Формат разметки в <see cref="Text"/>: "markdown" | "html". null — текст без разметки
+    /// (обычный plain text). У MAX нет entities на отправку, поэтому форматирование
+    /// встраивается прямо в текст markdown-синтаксисом.
+    /// </summary>
+    [JsonPropertyName("format")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Format { get; set; }
 }

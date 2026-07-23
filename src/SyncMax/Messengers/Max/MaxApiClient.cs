@@ -58,11 +58,16 @@ public sealed class MaxApiClient : IMessengerApiClient
         response.EnsureSuccessStatusCode();
     }
 
-    /// <summary>Отправка текстового сообщения в групповой чат/канал по его chat_id.</summary>
-    public async Task SendChatTextAsync(string chatId, string text, CancellationToken ct)
+    /// <summary>
+    /// Отправка форматированного сообщения в групповой чат/канал по его chat_id.
+    /// Разметка встраивается в текст как markdown (format=markdown), либо, если её нет,
+    /// уходит обычным plain-текстом без формата.
+    /// </summary>
+    public async Task SendChatTextAsync(string chatId, FormattedText content, CancellationToken ct)
     {
         var url = $"{BaseUrl}/messages?chat_id={chatId}";
-        using var response = await _http.PostAsJsonAsync(url, new MaxSendMessageRequest { Text = text }, ct);
+        var (text, format) = MaxFormatting.ToRequestText(content);
+        using var response = await _http.PostAsJsonAsync(url, new MaxSendMessageRequest { Text = text, Format = format }, ct);
         response.EnsureSuccessStatusCode();
     }
 

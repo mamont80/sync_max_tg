@@ -19,3 +19,4 @@ artifacts/
 ## Local secrets overrides
 appsettings.*.local.json
 appsettings.json
+/*.ini
