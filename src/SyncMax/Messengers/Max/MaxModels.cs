@@ -28,9 +28,17 @@ public sealed class MaxUpdate
     [JsonPropertyName("user")]
     public MaxUser? User { get; set; }
 
-    /// <summary>Id чата/канала, в который добавили бота (только для update_type == "bot_added").</summary>
+    /// <summary>Id чата/канала (для bot_added — куда добавили; для message_removed — где удалили).</summary>
     [JsonPropertyName("chat_id")]
     public long? ChatId { get; set; }
+
+    /// <summary>mid удалённого сообщения (только для update_type == "message_removed").</summary>
+    [JsonPropertyName("message_id")]
+    public string? MessageId { get; set; }
+
+    /// <summary>Кто удалил сообщение (только для update_type == "message_removed").</summary>
+    [JsonPropertyName("user_id")]
+    public long? RemovedUserId { get; set; }
 }
 
 public sealed class MaxMessage
@@ -211,6 +219,13 @@ public sealed class MaxSendMessageResponse
 {
     [JsonPropertyName("message")]
     public MaxMessage? Message { get; set; }
+}
+
+/// <summary>Ответ GET /messages — список сообщений (для дотягивания вложений при правке).</summary>
+public sealed class MaxMessagesResponse
+{
+    [JsonPropertyName("messages")]
+    public List<MaxMessage>? Messages { get; set; }
 }
 
 /// <summary>Запрос на прикрепление вложения к сообщению (после загрузки бинарника).</summary>

@@ -105,6 +105,58 @@ public sealed class MessageRelayService
             : $"👤 {senderName} · (из {sourceTag})";
     }
 
+    /// <summary>
+    /// Переносит правку сообщения: находит по карте пересланную копию оригинала в целевом чате
+    /// и редактирует её (новый текст/подпись с «шапкой»). Копии нет в карте (не пересылали или
+    /// запись устарела) — тихо ничего не делает.
+    /// </summary>
+    public async Task RelayEditAsync(
+        MessengerType messenger, string chatId, string? senderName, string sourceMsgId,
+        FormattedText newCaption, bool sourceHasMedia, CancellationToken ct)
+    {
+        var counterpart = await _messageLinks.FindCounterpartAsync(messenger, chatId, sourceMsgId, ct);
+        if (counterpart is not { } cp)
+            return;
+
+        var targetMessenger = Other(messenger);
+        if (!_clients.TryGetValue(targetMessenger, out var client))
+        {
+            _logger.LogWarning("Нет клиента для мессенджера {Messenger}.", targetMessenger);
+            return;
+        }
+
+        var header = BuildHeader(messenger, senderName);
+        var prefix = string.IsNullOrEmpty(newCaption.Text) ? header : $"{header}\n";
+        var payload = newCaption.WithPrefix(prefix);
+
+        await client.EditChatMessageAsync(cp.ChatId, cp.MsgId, payload, sourceHasMedia, ct);
+        _logger.LogInformation("Перенесена правка {FromMessenger}:{FromMsg} -> {ToMessenger}:{ToMsg}.",
+            messenger, sourceMsgId, targetMessenger, cp.MsgId);
+    }
+
+    /// <summary>
+    /// Переносит удаление сообщения: находит по карте пересланную копию и удаляет её, затем
+    /// чистит запись карты. Копии нет — тихо ничего не делает.
+    /// </summary>
+    public async Task RelayDeleteAsync(MessengerType messenger, string chatId, string sourceMsgId, CancellationToken ct)
+    {
+        var counterpart = await _messageLinks.FindCounterpartAsync(messenger, chatId, sourceMsgId, ct);
+        if (counterpart is not { } cp)
+            return;
+
+        var targetMessenger = Other(messenger);
+        if (!_clients.TryGetValue(targetMessenger, out var client))
+        {
+            _logger.LogWarning("Нет клиента для мессенджера {Messenger}.", targetMessenger);
+            return;
+        }
+
+        await client.DeleteChatMessageAsync(cp.ChatId, cp.MsgId, ct);
+        await _messageLinks.RemoveAsync(messenger, chatId, sourceMsgId, ct);
+        _logger.LogInformation("Перенесено удаление {FromMessenger}:{FromMsg} -> {ToMessenger}:{ToMsg}.",
+            messenger, sourceMsgId, targetMessenger, cp.MsgId);
+    }
+
     /// <summary>Сохраняет соответствие оригинала (источник) и пересланной копии (цель) в карту.</summary>
     private Task StoreMappingAsync(
         MessengerType sourceMessenger, string sourceChatId, string sourceMsgId,

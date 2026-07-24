@@ -57,11 +57,10 @@ public sealed class TelegramBotService : BackgroundService
         {
             try
             {
-                // allowedUpdates: [] -> получаем ВСЕ типы апдейтов (для отладки), а не только сообщения.
                 var updates = await bot.GetUpdates(
                     offset: offset,
                     timeout: 30,
-                    allowedUpdates: [UpdateType.Message, UpdateType.MyChatMember, UpdateType.CallbackQuery, UpdateType.ChannelPost],
+                    allowedUpdates: [UpdateType.Message, UpdateType.EditedMessage, UpdateType.MyChatMember, UpdateType.CallbackQuery, UpdateType.ChannelPost],
                     cancellationToken: ct);
 
                 foreach (var update in updates)
@@ -109,6 +108,13 @@ public sealed class TelegramBotService : BackgroundService
                 }
             }
         }
+        // Правка сообщения пользователем — переносим на пересланную копию.
+        if (update.EditedMessage is { } edited)
+        {
+            await HandleEditedAsync(edited, ct);
+            return;
+        }
+
         var message = update.Message;
         if (message is null)
             return;
@@ -160,6 +166,38 @@ public sealed class TelegramBotService : BackgroundService
             await _relay.RelayMessageAsync(MessengerType.Telegram, chatId, senderName, relay, ct);
         }
     }
+
+    /// <summary>
+    /// Переносит правку сообщения Telegram на пересланную копию: новый текст/подпись (медиа не
+    /// перезагружаем — только текст). Ботов и собственное эхо пропускаем.
+    /// </summary>
+    private async Task HandleEditedAsync(Message edited, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(_botId) && edited.From?.Id.ToString() == _botId)
+            return;
+        if (edited.Chat.Type is not (ChatType.Group or ChatType.Supergroup))
+            return;
+        if (edited.From?.IsBot == true)
+            return;
+
+        var text = edited.Text ?? edited.Caption ?? string.Empty;
+        var entities = edited.Entities ?? edited.CaptionEntities;
+        var caption = TelegramFormatting.ToFormattedText(text, entities);
+        var senderName = TelegramApiClient.BuildDisplayName(edited.From);
+
+        await _relay.RelayEditAsync(
+            MessengerType.Telegram, edited.Chat.Id.ToString(), senderName,
+            edited.MessageId.ToString(), caption, HasMedia(edited), ct);
+    }
+
+    private static bool HasMedia(Message message) =>
+        message.Photo is { Length: > 0 }
+        || message.Video is not null
+        || message.Animation is not null
+        || message.VideoNote is not null
+        || message.Voice is not null
+        || message.Audio is not null
+        || message.Document is not null;
 
     /// <summary>
     /// Строит платформо-независимое <see cref="RelayMessage"/> из сообщения Telegram: подпись

@@ -92,6 +92,14 @@ public sealed class MaxBotService : BackgroundService
             return;
         }
 
+        // Удаление сообщения пользователем — переносим на пересланную копию.
+        if (update.UpdateType == "message_removed")
+        {
+            if (update.MessageId is { Length: > 0 } removedMid && update.RemovedUserId?.ToString() != _botId)
+                await _relay.RelayDeleteAsync(MessengerType.Max, update.ChatId?.ToString() ?? string.Empty, removedMid, ct);
+            return;
+        }
+
         var message = update.Message;
         if (message?.Sender?.UserId is not { } uid)
             return;
@@ -102,6 +110,13 @@ public sealed class MaxBotService : BackgroundService
         // чат) — не обрабатываем повторно, иначе связка с обеих сторон зациклится.
         if (!string.IsNullOrEmpty(_botId) && userId2 == _botId)
             return;
+
+        // Правка сообщения пользователем — переносим на пересланную копию (а не пересылаем заново).
+        if (update.UpdateType == "message_edited")
+        {
+            await HandleMaxEditAsync(message, ct);
+            return;
+        }
 
         //Это сообщение лично боту
         if (message.Recipient?.ChatType is null or ChatKindExtensions.DialogCode)
@@ -146,6 +161,23 @@ public sealed class MaxBotService : BackgroundService
     /// (текст + markup) и медиа-вложения, скачанные во временные файлы по прямым url. Вложения,
     /// которые не удалось скачать или тип которых не поддерживается, опускаются.
     /// </summary>
+    /// <summary>
+    /// Переносит правку сообщения MAX на пересланную копию: новый текст/подпись (медиа не
+    /// перезагружаем). Работает только для сообщений в связанных группах/каналах.
+    /// </summary>
+    private async Task HandleMaxEditAsync(MaxMessage message, CancellationToken ct)
+    {
+        if (message.Recipient is not { ChatId: { } chatId, ChatType: ChatKindExtensions.ChatCode or ChatKindExtensions.ChannelCode })
+            return;
+        if (message.Body?.Mid is not { Length: > 0 } mid)
+            return;
+
+        var caption = MaxFormatting.ToFormattedText(message.Body);
+        var hasMedia = message.Body.Attachments?.Any(a => a.Type is "image" or "video" or "audio" or "file") == true;
+
+        await _relay.RelayEditAsync(MessengerType.Max, chatId.ToString(), message.Sender?.Name, mid, caption, hasMedia, ct);
+    }
+
     private async Task<RelayMessage> BuildRelayMessageAsync(MaxMessage message, CancellationToken ct)
     {
         var body = message.Body;

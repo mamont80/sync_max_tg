@@ -268,6 +268,80 @@ public sealed class MaxApiClient : IMessengerApiClient
     }
 
     /// <summary>
+    /// Редактирует сообщение MAX (PUT /messages?message_id=). Чтобы правка подписи не стёрла
+    /// медиа, дотягиваем текущие вложения сообщения (GET) и переотправляем их по token.
+    /// Ошибки (в т.ч. истёкшее окно редактирования) логируются, не пробрасываются.
+    /// </summary>
+    public async Task EditChatMessageAsync(string chatId, string messageId, FormattedText caption, bool isMediaCaption, CancellationToken ct)
+    {
+        var (text, format) = MaxFormatting.ToRequestText(caption);
+        var body = new MaxSendMessageRequest
+        {
+            Text = string.IsNullOrEmpty(text) ? null : text,
+            Format = format,
+            Attachments = await KeepExistingAttachmentsAsync(messageId, ct)
+        };
+
+        var url = $"{BaseUrl}/messages?message_id={messageId}";
+        try
+        {
+            using var response = await _http.PutAsJsonAsync(url, body, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var err = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogWarning("MAX: не удалось отредактировать сообщение {Mid} ({Status}): {Body}", messageId, response.StatusCode, err);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MAX: ошибка редактирования сообщения {Mid}.", messageId);
+        }
+    }
+
+    public async Task DeleteChatMessageAsync(string chatId, string messageId, CancellationToken ct)
+    {
+        var url = $"{BaseUrl}/messages?message_id={messageId}";
+        try
+        {
+            using var response = await _http.DeleteAsync(url, ct);
+            if (!response.IsSuccessStatusCode)
+                _logger.LogWarning("MAX: не удалось удалить сообщение {Mid} ({Status}).", messageId, response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MAX: ошибка удаления сообщения {Mid}.", messageId);
+        }
+    }
+
+    /// <summary>
+    /// Возвращает вложения существующего сообщения как запросы на переотправку (по token) —
+    /// чтобы при правке текста медиа не потерялось. null/пусто, если вложений нет или GET не удался.
+    /// </summary>
+    private async Task<List<MaxAttachmentRequest>?> KeepExistingAttachmentsAsync(string messageId, CancellationToken ct)
+    {
+        try
+        {
+            var url = $"{BaseUrl}/messages?message_ids={messageId}";
+            var raw = await _http.GetStringAsync(url, ct);
+            var message = string.IsNullOrWhiteSpace(raw)
+                ? null
+                : JsonSerializer.Deserialize<MaxMessagesResponse>(raw)?.Messages?.FirstOrDefault();
+
+            var kept = message?.Body?.Attachments?
+                .Where(a => a.Type is "image" or "video" or "audio" or "file" && a.Payload?.Token is { Length: > 0 })
+                .Select(a => new MaxAttachmentRequest { Type = a.Type!, Payload = new MaxAttachmentRequestPayload { Token = a.Payload!.Token } })
+                .ToList();
+
+            return kept is { Count: > 0 } ? kept : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MAX: не удалось получить вложения сообщения {Mid} для сохранения при правке.", messageId);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Скачивает вложение MAX по прямому url во временный файл. null при ошибке/превышении лимита.
     /// Сначала пробуем без авторизации (так отдаётся публичный CDN, напр. изображения); если не
     /// вышло — повторяем с заголовком Authorization API (url аудио/видео/файлов может требовать токен).

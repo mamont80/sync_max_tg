@@ -149,6 +149,45 @@ public sealed class TelegramApiClient : IMessengerApiClient
         int.TryParse(targetMessageId, out var mid) ? new ReplyParameters { MessageId = mid } : null;
 
     /// <summary>
+    /// Редактирует текст (для текстового сообщения) или подпись (для медиа) — через entities,
+    /// без parse_mode. Медиа при правке подписи сохраняется.
+    /// </summary>
+    public async Task EditChatMessageAsync(string chatId, string messageId, FormattedText caption, bool isMediaCaption, CancellationToken ct)
+    {
+        if (BotClient is not { } bot || !int.TryParse(messageId, out var mid))
+            return;
+
+        var id = long.Parse(chatId);
+        var entities = TelegramFormatting.ToEntities(caption);
+        try
+        {
+            if (isMediaCaption)
+                await bot.EditMessageCaption(id, mid, caption: caption.Text, captionEntities: entities, cancellationToken: ct);
+            else
+                await bot.EditMessageText(id, mid, caption.Text, entities: entities, cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Telegram: не удалось отредактировать сообщение {Mid}.", mid);
+        }
+    }
+
+    public async Task DeleteChatMessageAsync(string chatId, string messageId, CancellationToken ct)
+    {
+        if (BotClient is not { } bot || !int.TryParse(messageId, out var mid))
+            return;
+
+        try
+        {
+            await bot.DeleteMessage(long.Parse(chatId), mid, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Telegram: не удалось удалить сообщение {Mid}.", mid);
+        }
+    }
+
+    /// <summary>
     /// Скачивает файл Telegram по file_id во временный файл на диске. null, если скачать не
     /// удалось (в т.ч. лимит Bot API 20 МБ на скачивание). Расширение — подсказка для имени.
     /// </summary>

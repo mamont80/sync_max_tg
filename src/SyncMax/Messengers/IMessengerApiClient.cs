@@ -31,4 +31,15 @@ public interface IMessengerApiClient
     /// Возвращает id первого отправленного сообщения (для карты ответов) или null.
     /// </summary>
     Task<string?> SendChatMessageAsync(string chatId, RelayMessage message, CancellationToken ct);
+
+    /// <summary>
+    /// Редактирует ранее отправленное сообщение в чате: новый текст/подпись (с «шапкой»).
+    /// <paramref name="isMediaCaption"/> = true, если сообщение с медиа (правим подпись, а не
+    /// текстовое сообщение). Медиа при этом сохраняется. Ошибки (в т.ч. истёкшее окно правки
+    /// у MAX) логируются, не пробрасываются.
+    /// </summary>
+    Task EditChatMessageAsync(string chatId, string messageId, FormattedText caption, bool isMediaCaption, CancellationToken ct);
+
+    /// <summary>Удаляет ранее отправленное сообщение в чате. Ошибки логируются, не пробрасываются.</summary>
+    Task DeleteChatMessageAsync(string chatId, string messageId, CancellationToken ct);
 }

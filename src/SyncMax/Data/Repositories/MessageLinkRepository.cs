@@ -53,6 +53,16 @@ public sealed class MessageLinkRepository
         return row is null ? null : (row.ChatId, row.MsgId);
     }
 
+    /// <summary>Удаляет из карты записи для указанного сообщения (после его удаления) — уборка.</summary>
+    public async Task RemoveAsync(MessengerType messenger, string chatId, string msgId, CancellationToken ct)
+    {
+        await using var conn = await _factory.CreateOpenAsync(ct);
+        var sql = messenger == MessengerType.Max
+            ? "DELETE FROM message_links WHERE max_chat_id = @chatId AND max_msg_id = @msgId;"
+            : "DELETE FROM message_links WHERE tg_chat_id = @chatId AND tg_msg_id = @msgId;";
+        await conn.ExecuteAsync(new CommandDefinition(sql, new { chatId, msgId }, cancellationToken: ct));
+    }
+
     private sealed class CounterpartRow
     {
         public string ChatId { get; set; } = string.Empty;
