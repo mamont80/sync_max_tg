@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using SyncMax.Configuration;
 using SyncMax.Data.Repositories;
 using SyncMax.Models;
 using SyncMax.Services;
@@ -11,32 +13,40 @@ using Telegram.Bot.Types.Enums;
 namespace SyncMax.Messengers.Telegram;
 
 /// <summary>
-/// Фоновый сервис Telegram-бота: long polling входящих сообщений через
-/// <see cref="TelegramApiClient"/> и передача их в <see cref="LinkingService"/>.
-/// Отправка ответов — забота клиента, этот класс только принимает и разбирает апдейты.
+/// Фоновый сервис Telegram-бота: приём входящих обновлений через <see cref="TelegramApiClient"/> —
+/// либо long polling, либо webhook (см. <see cref="TelegramOptions.Mode"/>) — и передача их в
+/// <see cref="LinkingService"/>. Отправка ответов — забота клиента, этот класс только принимает
+/// и разбирает апдейты. В режиме webhook апдейты поступают снаружи через
+/// <see cref="HandleWebhookUpdateAsync"/> (вызывается из HTTP-эндпоинта в Program.cs).
 /// </summary>
 public sealed class TelegramBotService : BackgroundService
 {
     // Отладочный дамп входящих апдейтов в человекочитаемом JSON.
     private static readonly JsonSerializerOptions DebugJson = new() { WriteIndented = true };
 
+    private static readonly UpdateType[] AllowedUpdates =
+        [UpdateType.Message, UpdateType.EditedMessage, UpdateType.MyChatMember, UpdateType.CallbackQuery, UpdateType.ChannelPost];
+
     private readonly TelegramApiClient _client;
     private readonly LinkingService _linking;
     private readonly ChatLinkingService _chatLinking;
     private readonly SystemCommandService _systemCommands;
     private readonly MessageRelayService _relay;
+    private readonly TelegramOptions _options;
     private readonly ILogger<TelegramBotService> _logger;
     private string _botId = string.Empty;
 
     public TelegramBotService(
         TelegramApiClient client, LinkingService linking, ChatLinkingService chatLinking,
-        SystemCommandService systemCommands, MessageRelayService relay, ILogger<TelegramBotService> logger)
+        SystemCommandService systemCommands, MessageRelayService relay, IOptions<TelegramOptions> options,
+        ILogger<TelegramBotService> logger)
     {
         _client = client;
         _linking = linking;
         _chatLinking = chatLinking;
         _systemCommands = systemCommands;
         _relay = relay;
+        _options = options.Value;
         _logger = logger;
     }
 
@@ -50,7 +60,33 @@ public sealed class TelegramBotService : BackgroundService
 
         var me = await bot.GetMe(ct);
         _botId = me.Id.ToString();
-        _logger.LogInformation("Telegram-бот @{Username} запущен.", me.Username);
+
+        if (_options.Mode == BotMode.Webhook)
+        {
+            if (string.IsNullOrWhiteSpace(_options.Webhook.Url))
+            {
+                _logger.LogWarning("Telegram: выбран режим Webhook, но Telegram:Webhook:Url не задан. Бот отключён.");
+                return;
+            }
+
+            // Секрет — производная от токена бота (WebhookSecret): Telegram будет присылать
+            // его заголовком X-Telegram-Bot-Api-Secret-Token, чем мы и проверим отправителя.
+            await bot.SetWebhook(
+                _options.Webhook.Url,
+                allowedUpdates: AllowedUpdates,
+                secretToken: WebhookSecret.FromToken(_options.Token),
+                cancellationToken: ct);
+            _logger.LogInformation("Telegram-бот @{Username} запущен в режиме webhook ({Url}).", me.Username, _options.Webhook.Url);
+
+            try { await Task.Delay(Timeout.Infinite, ct); }
+            catch (OperationCanceledException) { }
+            return;
+        }
+
+        // На случай переключения обратно с webhook на long polling: пока webhook
+        // зарегистрирован, getUpdates отклоняется Telegram с ошибкой конфликта.
+        await bot.DeleteWebhook(cancellationToken: ct);
+        _logger.LogInformation("Telegram-бот @{Username} запущен в режиме long polling.", me.Username);
 
         var offset = 0;
         while (!ct.IsCancellationRequested)
@@ -60,7 +96,7 @@ public sealed class TelegramBotService : BackgroundService
                 var updates = await bot.GetUpdates(
                     offset: offset,
                     timeout: 30,
-                    allowedUpdates: [UpdateType.Message, UpdateType.EditedMessage, UpdateType.MyChatMember, UpdateType.CallbackQuery, UpdateType.ChannelPost],
+                    allowedUpdates: AllowedUpdates,
                     cancellationToken: ct);
 
                 foreach (var update in updates)
@@ -80,6 +116,13 @@ public sealed class TelegramBotService : BackgroundService
                 await Task.Delay(TimeSpan.FromSeconds(3), ct);
             }
         }
+    }
+
+    /// <summary>Обрабатывает апдейт, доставленный webhook-запросом (см. эндпоинт в Program.cs).</summary>
+    public Task HandleWebhookUpdateAsync(Update update, CancellationToken ct)
+    {
+        LogIncomingUpdate(update);
+        return DoUpdate(update, ct);
     }
     /// <summary>
     /// Обработка отдельного обновления

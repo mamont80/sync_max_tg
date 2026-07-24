@@ -1,14 +1,18 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using SyncMax.Configuration;
 using SyncMax.Models;
 using SyncMax.Services;
 
 namespace SyncMax.Messengers.Max;
 
 /// <summary>
-/// Фоновый сервис MAX-бота: long polling обновлений через <see cref="MaxApiClient"/>
-/// и передача их в <see cref="LinkingService"/>. Отправка ответов — забота клиента,
-/// этот класс только принимает и разбирает апдейты.
+/// Фоновый сервис MAX-бота: приём обновлений через <see cref="MaxApiClient"/> — либо long
+/// polling, либо webhook (см. <see cref="MaxOptions.Mode"/>) — и передача их в
+/// <see cref="LinkingService"/>. Отправка ответов — забота клиента, этот класс только
+/// принимает и разбирает апдейты. В режиме webhook апдейты поступают снаружи через
+/// <see cref="HandleWebhookUpdateAsync"/> (вызывается из HTTP-эндпоинта в Program.cs).
 /// </summary>
 public sealed class MaxBotService : BackgroundService
 {
@@ -17,18 +21,21 @@ public sealed class MaxBotService : BackgroundService
     private readonly ChatLinkingService _chatLinking;
     private readonly SystemCommandService _systemCommands;
     private readonly MessageRelayService _relay;
+    private readonly MaxOptions _options;
     private readonly ILogger<MaxBotService> _logger;
     private string _botId = string.Empty;
 
     public MaxBotService(
         MaxApiClient client, LinkingService linking, ChatLinkingService chatLinking,
-        SystemCommandService systemCommands, MessageRelayService relay, ILogger<MaxBotService> logger)
+        SystemCommandService systemCommands, MessageRelayService relay, IOptions<MaxOptions> options,
+        ILogger<MaxBotService> logger)
     {
         _client = client;
         _linking = linking;
         _chatLinking = chatLinking;
         _systemCommands = systemCommands;
         _relay = relay;
+        _options = options.Value;
         _logger = logger;
     }
 
@@ -42,8 +49,25 @@ public sealed class MaxBotService : BackgroundService
 
         var me = await _client.GetMeAsync(ct);
         _botId = me?.UserId?.ToString() ?? string.Empty;
-        _logger.LogInformation("MAX-бот запущен.");
 
+        if (_options.Mode == BotMode.Webhook)
+        {
+            if (string.IsNullOrWhiteSpace(_options.Webhook.Url))
+            {
+                _logger.LogWarning("MAX: выбран режим Webhook, но Max:Webhook:Url не задан. Бот отключён.");
+                return;
+            }
+
+            var subscribeUrl = AppendSecretToken(_options.Webhook.Url, WebhookSecret.FromToken(_options.Token));
+            await _client.SubscribeWebhookAsync(subscribeUrl, ct);
+            _logger.LogInformation("MAX-бот запущен в режиме webhook ({Url}).", _options.Webhook.Url);
+
+            try { await Task.Delay(Timeout.Infinite, ct); }
+            catch (OperationCanceledException) { }
+            return;
+        }
+
+        _logger.LogInformation("MAX-бот запущен в режиме long polling.");
         long? marker = null;
         while (!ct.IsCancellationRequested)
         {
@@ -52,11 +76,7 @@ public sealed class MaxBotService : BackgroundService
                 var response = await _client.GetUpdatesAsync(marker, ct);
 
                 foreach (var update in response?.Updates ?? [])
-                {
-                    _logger.LogInformation("[MAX] апдейт type={Type} sender={Sender} text={Text}",
-                        update.UpdateType, update.Message?.Sender?.UserId, update.Message?.Body?.Text);
-                    await DoUpdate(update, ct);
-                }
+                    await LogAndHandleAsync(update, ct);
 
                 marker = response?.Marker ?? marker;
             }
@@ -70,6 +90,30 @@ public sealed class MaxBotService : BackgroundService
                 await Task.Delay(TimeSpan.FromSeconds(3), ct);
             }
         }
+    }
+
+    /// <summary>Обрабатывает апдейт, доставленный webhook-запросом (см. эндпоинт в Program.cs).</summary>
+    public Task HandleWebhookUpdateAsync(MaxUpdate update, CancellationToken ct) => LogAndHandleAsync(update, ct);
+
+    private Task LogAndHandleAsync(MaxUpdate update, CancellationToken ct)
+    {
+        _logger.LogInformation("[MAX] апдейт type={Type} sender={Sender} text={Text}",
+            update.UpdateType, update.Message?.Sender?.UserId, update.Message?.Body?.Text);
+        return DoUpdate(update, ct);
+    }
+
+    /// <summary>
+    /// Добавляет секрет (производную от токена бота, см. <see cref="WebhookSecret"/>)
+    /// query-параметром ?token= к адресу подписки — у MAX нет штатной подписи webhook,
+    /// поэтому подлинность входящего запроса проверяется по этому параметру.
+    /// </summary>
+    private static string AppendSecretToken(string url, string secretToken)
+    {
+        if (string.IsNullOrEmpty(secretToken))
+            return url;
+
+        var separator = url.Contains('?') ? "&" : "?";
+        return $"{url}{separator}token={Uri.EscapeDataString(secretToken)}";
     }
 
     /// <summary>

@@ -30,7 +30,8 @@
       "Bash(timeout 10 dotnet run --no-build)",
       "Bash(timeout 8 ./SyncMax.exe)",
       "Bash(wait)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(xargs -I{} echo {})"
     ]
   }
 }

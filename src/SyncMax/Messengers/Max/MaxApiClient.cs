@@ -398,6 +398,40 @@ public sealed class MaxApiClient : IMessengerApiClient
         _ => "file"
     };
 
+    /// <summary>
+    /// Подписывает бота на webhook: MAX начнёт слать обновления POST-запросом на <paramref name="url"/>
+    /// вместо необходимости их вычитывать через /updates. Формат эндпоинта — по аналогии с
+    /// подпиской Bot API (см. примечание в MaxModels.cs); если у реального API отличается —
+    /// правится только этот метод.
+    /// </summary>
+    public async Task SubscribeWebhookAsync(string url, CancellationToken ct)
+    {
+        var requestUrl = $"{BaseUrl}/subscriptions";
+        using var response = await _http.PostAsJsonAsync(requestUrl, new MaxSubscribeRequest { Url = url }, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var err = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogError("MAX: не удалось подписаться на webhook {Url} ({Status}): {Body}", url, response.StatusCode, err);
+            response.EnsureSuccessStatusCode();
+        }
+    }
+
+    /// <summary>Отписывает ранее зарегистрированный webhook (используется при переключении обратно на long polling).</summary>
+    public async Task UnsubscribeWebhookAsync(string url, CancellationToken ct)
+    {
+        try
+        {
+            var requestUrl = $"{BaseUrl}/subscriptions?url={Uri.EscapeDataString(url)}";
+            using var response = await _http.DeleteAsync(requestUrl, ct);
+            if (!response.IsSuccessStatusCode)
+                _logger.LogWarning("MAX: не удалось отписаться от webhook {Url} ({Status}).", url, response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MAX: ошибка отписки от webhook {Url}.", url);
+        }
+    }
+
     /// <summary>Информация о самом боте (свой user_id) — нужна, чтобы не пересылать эхо собственных сообщений.</summary>
     public async Task<MaxUser?> GetMeAsync(CancellationToken ct)
     {

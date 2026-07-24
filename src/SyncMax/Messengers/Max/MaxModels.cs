@@ -16,6 +16,16 @@ public sealed class MaxUpdatesResponse
     public long? Marker { get; set; }
 }
 
+/// <summary>
+/// Тело запроса подписки на webhook (POST /subscriptions). Заполнено по типовому формату
+/// Bot API — если у реального API отличается, правится только этот класс и MaxApiClient.
+/// </summary>
+public sealed class MaxSubscribeRequest
+{
+    [JsonPropertyName("url")]
+    public string Url { get; set; } = string.Empty;
+}
+
 public sealed class MaxUpdate
 {
     [JsonPropertyName("update_type")]

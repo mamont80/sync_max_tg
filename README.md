@@ -152,6 +152,88 @@ Telegram; heading/highlighted/user_mention у MAX), при переносе от
   Обеим сторонам приходит сообщение о сбросе настроек, а затем — новое
   приглашение связать аккаунты (как после `/start`).
 
+## Приём обновлений: long polling / webhook
+
+У каждого мессенджера свой независимый режим приёма обновлений —
+`Telegram:Mode` / `Max:Mode`, значения `LongPolling` (по умолчанию) или `Webhook`.
+Можно держать один мессенджер на polling, а другой на webhook — режимы не связаны.
+
+- **LongPolling** (по умолчанию) — бот сам опрашивает сервер мессенджера в цикле.
+  Публичный адрес не нужен, работает и локально за NAT.
+- **Webhook** — мессенджер сам присылает обновления HTTP-запросом на публичный
+  HTTPS-адрес. Требует, чтобы сервер был доступен снаружи (напр. за reverse proxy
+  с TLS-терминацией — Kestrel слушает `HttpServer:ListenUrl` уже без TLS, обычно
+  `http://127.0.0.1:PORT` за nginx, либо напрямую `http://0.0.0.0:PORT`, если TLS
+  терминируется иначе).
+
+Адрес прослушивания один на всех (`HttpServer:ListenUrl`) — HTTP-сервер в процессе
+один. Всё, что относится к конкретному боту (публичный адрес и путь), лежит в его
+собственной секции `Telegram:Webhook` / `Max:Webhook`:
+
+```json
+{
+  "Telegram": {
+    "Token": "ВАШ_TELEGRAM_BOT_TOKEN",
+    "Mode": "Webhook",
+    "Webhook": {
+      "Url": "https://ваш-домен/webhook/telegram",
+      "Path": "/webhook/telegram"
+    }
+  },
+  "Max": {
+    "Token": "ВАШ_MAX_BOT_TOKEN",
+    "Mode": "Webhook",
+    "Webhook": {
+      "Url": "https://ваш-домен/webhook/max",
+      "Path": "/webhook/max"
+    }
+  },
+  "HttpServer": {
+    "ListenUrl": "http://0.0.0.0:8443"
+  }
+}
+```
+
+- `HttpServer:ListenUrl` — общий адрес, на котором Kestrel принимает входящие
+  webhook-запросы обоих ботов.
+- `Url` — публичный адрес, который регистрируется в самом мессенджере
+  (Telegram — `setWebhook`, MAX — `POST /subscriptions`); должен указывать на
+  `Path` этого же мессенджера через ваш reverse proxy/домен.
+- `Path` — локальный путь, который слушает Kestrel (должен совпадать с путём
+  в `Url`). По умолчанию — `/webhook/telegram` и `/webhook/max`.
+
+**Отдельного секрета в конфиге нет:** подлинность входящих запросов проверяется
+по токену самого бота (`Telegram:Token` / `Max:Token`) — у каждого бота свой,
+и мессенджер его уже знает. Передаётся не сам токен, а его SHA-256
+(`WebhookSecret`): Telegram разрешает в `secret_token` только `A-Z a-z 0-9 _ -`
+(а в токене есть двоеточие), у MAX же секрет уходит query-параметром в url
+подписки — настоящий токен API там светился бы в логах reverse proxy. Telegram
+возвращает секрет заголовком `X-Telegram-Bot-Api-Secret-Token`, MAX — параметром
+`?token=`; запрос с чужим значением отклоняется (`401`).
+
+HTTP-сервер поднимается **всегда, когда задан `HttpServer:ListenUrl`** —
+независимо от режимов ботов. Если `ListenUrl` пуст, Kestrel слушает случайный
+порт на `127.0.0.1` и наружу ничего не открывается. Webhook-эндпоинт каждого
+бота при этом маппится только в его режиме `Webhook`.
+
+### Проверка доступности
+
+`GET /test` отвечает `200` и текстом `ok` — всегда, независимо от режимов ботов.
+Удобно проверить, что порт открыт и reverse proxy настроен верно:
+
+```
+curl https://ваш-домен/test
+ok
+```
+
+При переключении Telegram с webhook обратно на `LongPolling` бот сам вызывает
+`deleteWebhook` при старте (иначе `getUpdates` конфликтует с активным webhook).
+
+Формат эндпоинта подписки MAX (`POST /subscriptions`) не задокументирован
+публично на момент реализации — заполнен по типовому шаблону Bot API (см.
+комментарий в `MaxModels.cs`/`MaxApiClient.SubscribeWebhookAsync`); если
+реальный API отличается, поправить нужно только эти два места.
+
 ## Ключи / токены
 
 Оставлены пустыми в [`src/SyncMax/appsettings.json`](src/SyncMax/appsettings.json) — впишите свои:
@@ -241,7 +323,8 @@ SQLite, файл создаётся автоматически (по умолч�
 
 ```
 src/SyncMax/
-  Program.cs                    — хост, DI, запуск миграций и ботов
+  Program.cs                    — хост (Kestrel + generic host), DI, webhook-эндпоинты,
+                                   запуск миграций и ботов
   appsettings.json              — токены и настройки (ключи пустые)
   Configuration/                — классы опций
   Models/                       — User, MessengerType, ChatLink, ChatKind, RepostDirection,
