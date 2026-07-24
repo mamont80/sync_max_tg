@@ -10,6 +10,10 @@
 
 - .NET 10 SDK
 - Visual Studio 2026 (решение `SyncMax.sln`)
+- `ffmpeg` в `PATH` — для конвертации аудио при пересылке (без него голосовые
+  пересылаются файлом, остальное работает)
+
+Либо только **Docker** — SDK и ffmpeg не нужны, см. [Запуск в Docker](#запуск-в-docker).
 
 ## Как это работает (связывание)
 
@@ -246,12 +250,14 @@ ok
 ```
 
 Токены можно не хранить в файле, а передать через переменные окружения
-(перекрывают `appsettings.json`):
+(перекрывают `appsettings.json`). Имя переменной — это путь настройки, где `:`
+заменено на `__`, поэтому так передаётся **любая** настройка, а не только токены:
 
 ```
 Telegram__Token=...
 Max__Token=...
-Database__ConnectionString=Data Source=syncmax.db
+Telegram__Webhook__Url=https://example.com/webhook/telegram
+Database__ConnectionString=Data Source=/data/syncmax.db
 ```
 
 Если токен мессенджера пуст — соответствующий бот просто не запускается
@@ -261,6 +267,85 @@ Database__ConnectionString=Data Source=syncmax.db
 
 ```powershell
 dotnet run --project src/SyncMax
+```
+
+## Запуск в Docker
+
+Готовые [`Dockerfile`](Dockerfile) и [`docker-compose.yml`](docker-compose.yml) — в
+корне репозитория. Образ собирается из исходников (multi-stage: `sdk:10.0` → `aspnet:10.0`)
+и уже содержит `ffmpeg`, так что ставить на хост .NET SDK не нужно.
+
+### Быстрый старт
+
+```bash
+cp .env.example .env      # PowerShell: Copy-Item .env.example .env
+# впишите в .env токены Telegram__Token и Max__Token
+docker compose up -d --build
+docker compose logs -f
+```
+
+### Как передаются настройки
+
+Единственный источник конфигурации для контейнера — файл **`.env`** рядом с
+`docker-compose.yml` (шаблон со всеми ключами и комментариями — [`.env.example`](.env.example)).
+Локальный `appsettings.json` в образ **не** попадает (исключён в `.dockerignore`),
+чтобы рабочие токены не запеклись в слои образа.
+
+Имена переменных — те же пути настроек с разделителем `__`:
+
+```
+Telegram__Token=123456:AA...
+Max__Token=f9LHod...
+Telegram__Mode=Webhook
+Telegram__Webhook__Url=https://example.com/webhook/telegram
+```
+
+Отсюда следует, что в `.env` можно положить любую настройку из `appsettings.json`,
+даже если её нет в шаблоне. Приоритет обычный: `.env` > `ENV` образа > дефолты в коде.
+
+Отдельно в `.env` лежат два параметра для самого compose (в приложение они не идут):
+`HTTP_PORT` — порт на хосте, `TZ` — часовой пояс контейнера (влияет на время в логах
+и суточную ротацию файлов).
+
+Если конфигурацию удобнее держать одним JSON, а не набором переменных, — положите
+рядом `appsettings.docker.json` и раскомментируйте в `docker-compose.yml` строку
+монтирования его в `/app/appsettings.Production.json`.
+
+### Данные и логи
+
+Смонтированы каталогами на хосте, поэтому переживают пересборку образа и `docker compose down`:
+
+| В контейнере | На хосте | Что там |
+|---|---|---|
+| `/data/syncmax.db` | `./data/` | база SQLite |
+| `/app/logs/` | `./logs/` | `syncmax-YYYY-MM-DD.log` |
+
+Если база уже есть локально — просто положите файл в `./data/syncmax.db` до первого
+запуска, миграции подхватят её и при необходимости обновят схему.
+
+На Linux контейнер работает под непривилегированным пользователем `app` (uid 1654).
+Если он не сможет писать в смонтированные каталоги, выполните на хосте
+`sudo chown -R 1654:1654 data logs` либо задайте свой `user:` в `docker-compose.yml`
+(строка с примером закомментирована в конце файла). На Docker Desktop (Windows/macOS)
+этого не требуется.
+
+### Webhook и порт
+
+Порт `8443` внутри контейнера проброшен на `HTTP_PORT` хоста. Он нужен только при
+`Mode=Webhook`; для `LongPolling` проброс можно закомментировать. Сам контейнер слушает
+**HTTP** — TLS-сертификат для публичного адреса из `*__Webhook__Url` терминирует
+reverse proxy (nginx/Caddy/Traefik) перед ним.
+
+Проверить, что контейнер доступен снаружи: `curl https://ваш-домен/test` → `ok`. Этот же
+эндпоинт используется в `HEALTHCHECK`, поэтому состояние видно и в `docker compose ps`.
+
+### Частые команды
+
+```bash
+docker compose up -d --build     # пересобрать и перезапустить после правок кода
+docker compose restart           # перечитать .env
+docker compose logs -f --tail=100
+docker compose down              # остановить (данные в ./data остаются)
 ```
 
 ## Логирование
@@ -282,7 +367,12 @@ dotnet run --project src/SyncMax
 
 ## База данных
 
-SQLite, файл создаётся автоматически (по умолчанию `syncmax.db`).
+SQLite, файл создаётся автоматически. Путь задаётся в `Database:ConnectionString`:
+локально — абсолютный путь (`C:\sync_max\data\syncmax.db`), в контейнере —
+`/data/syncmax.db` (каталог `./data` на хосте). Путь лучше держать абсолютным:
+относительный (`Data Source=syncmax.db`) резолвится от текущей рабочей директории
+процесса, а она разная при запуске из Visual Studio и напрямую из `bin\Debug\...` —
+получаются две разные базы.
 
 **Таблица `users`** — по записи на каждый мессенджер:
 `user_id` (open_id для MAX), `messenger` (`tg`/`max`), `registered_at`,
@@ -322,6 +412,9 @@ SQLite, файл создаётся автоматически (по умолч�
 ## Структура
 
 ```
+Dockerfile                      — сборка образа (sdk:10.0 -> aspnet:10.0 + ffmpeg)
+docker-compose.yml              — сервис, тома ./data и ./logs, проброс порта
+.env.example                    — шаблон настроек контейнера (копируется в .env)
 src/SyncMax/
   Program.cs                    — хост (Kestrel + generic host), DI, webhook-эндпоинты,
                                    запуск миграций и ботов

@@ -1,0 +1,51 @@
+services:
+  syncmax:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: syncmax:latest
+    container_name: syncmax
+    restart: unless-stopped
+
+    # Все настройки приложения (включая токены) — в файле .env рядом с этим файлом.
+    # Имена переменных = путь в appsettings.json с разделителем "__". Шаблон: .env.example.
+    env_file:
+      - path: .env
+        required: false
+
+    environment:
+      # Часовой пояс контейнера: от него зависит время в логах и суточная ротация файлов.
+      TZ: ${TZ:-Europe/Moscow}
+
+    ports:
+      # Слева — порт хоста (меняется через HTTP_PORT в .env), справа — порт внутри контейнера.
+      # Нужен только в режиме Webhook; при LongPolling строку можно закомментировать.
+      - "${HTTP_PORT:-8443}:8443"
+
+    volumes:
+      # База SQLite. Каталог ./data переживает пересборку образа и удаление контейнера.
+      - ./data:/data
+      # Логи: logs/syncmax-YYYY-MM-DD.log
+      - ./logs:/app/logs
+      # Необязательно: файл настроек вместо переменных окружения. Раскомментируйте, если
+      # удобнее держать конфигурацию одним JSON (переменные из .env всё равно приоритетнее).
+      # - ./appsettings.docker.json:/app/appsettings.Production.json:ro
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8443/test"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # На Linux контейнер пишет в ./data и ./logs от пользователя app (uid 1654) — если
+    # права на этих каталогах не дают писать, выполните на хосте
+    #   sudo chown -R 1654:1654 data logs
+    # либо раскомментируйте строку ниже, подставив свой uid:gid (`id -u`:`id -g`).
+    # user: "1000:1000"

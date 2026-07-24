@@ -1,0 +1,32 @@
+## Результаты сборки — образ собирается внутри контейнера с нуля
+**/bin/
+**/obj/
+artifacts/
+
+## Локальные настройки с реальными токенами в образ не попадают:
+## всё передаётся переменными окружения (см. .env.example).
+src/SyncMax/appsettings.json
+src/SyncMax/appsettings.*.json
+.env
+*.ini
+
+## Локальные данные и логи — они живут в томах
+data/
+logs/
+*.db
+*.db-shm
+*.db-wal
+
+## Прочее, не нужное для сборки
+.git/
+.gitignore
+.vs/
+.idea/
+.claude/
+.claudeignore
+*.user
+*.suo
+img/
+README.md
+Dockerfile
+docker-compose.yml

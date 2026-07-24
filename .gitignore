@@ -20,3 +20,8 @@ artifacts/
 appsettings.*.local.json
 appsettings.json
 /*.ini
+
+## Docker: локальные настройки и данные томов
+.env
+/data/
+/logs/

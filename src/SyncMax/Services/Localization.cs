@@ -46,7 +46,7 @@ public static class Localization
             ["remember_admin"] =
                 "🎉 Вы уже сделали бота участником группы, не забудьте сделать его администратором, иначе он не сможет писать",
             ["admin_congratulation"] =
-                "🎉 Отлично! Вы сделали бота администратором группы.",
+                "🎉 Отлично! Вы сделали бота администратором группы. Чтобы создать связку групп, напишите в групповом чате сообщение: /link",
             ["all_links_deleted"] =
                 "🗑 Все связки чатов удалены.",
             ["settings_reset"] =
@@ -84,12 +84,11 @@ public static class Localization
             ["chat_link_already_exists"] =
                 "ℹ️ This chat link already exists.",
             ["chat_link_created"] =
-                "🎉 Chat link \"{0}\" created and active."
-            ,
+                "🎉 Chat link \"{0}\" created and active.",
             ["remember_admin"] =
                 "🎉 You've already added the bot to the group. Don't forget to make it an administrator, otherwise it won't be able to send messages.",
             ["admin_congratulation"] =
-                "🎉 Great! You made the bot a group administrator.",
+                "🎉 Great! You made the bot a group administrator. To create a group link, send /link in the group chat.",
             ["all_links_deleted"] =
                 "🗑 All chat links have been deleted.",
             ["settings_reset"] =

@@ -120,12 +120,10 @@ public sealed class ChatLinkingService
         if (newMemberType == MemberType.Administrator)
         {
             await SendAsync(messenger, userId, Localization.Format(lang, "admin_congratulation"), ct);
-            if (user.LinkingChatId != chatId) await HandleRepostAsync(messenger, userId, chatId, chatKind, chatTitle, ct);
         }
         if (newMemberType == MemberType.Member)
         {
             await SendAsync(messenger, userId, Localization.Format(lang, "remember_admin"), ct);
-            if (user.LinkingChatId != chatId) await HandleRepostAsync(messenger, userId, chatId, chatKind, chatTitle, ct);
         }
     }
 
