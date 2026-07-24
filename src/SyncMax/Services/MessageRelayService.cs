@@ -18,13 +18,16 @@ namespace SyncMax.Services;
 public sealed class MessageRelayService
 {
     private readonly ChatLinkRepository _chatLinks;
+    private readonly MessageLinkRepository _messageLinks;
     private readonly IReadOnlyDictionary<MessengerType, IMessengerApiClient> _clients;
     private readonly ILogger<MessageRelayService> _logger;
 
     public MessageRelayService(
-        ChatLinkRepository chatLinks, IEnumerable<IMessengerApiClient> clients, ILogger<MessageRelayService> logger)
+        ChatLinkRepository chatLinks, MessageLinkRepository messageLinks,
+        IEnumerable<IMessengerApiClient> clients, ILogger<MessageRelayService> logger)
     {
         _chatLinks = chatLinks;
+        _messageLinks = messageLinks;
         _clients = clients.ToDictionary(c => c.Messenger);
         _logger = logger;
     }
@@ -59,12 +62,25 @@ public sealed class MessageRelayService
                 return;
             }
 
+            // Если исходное сообщение — ответ, ищем в карте копию оригинала в целевом чате,
+            // чтобы оформить пересланную копию как ответ на неё. Нет в карте — шлём без ответа.
+            string? targetReplyId = null;
+            if (message.ReplyToSourceMessageId is { } replySrc)
+            {
+                var counterpart = await _messageLinks.FindCounterpartAsync(messenger, chatId, replySrc, ct);
+                targetReplyId = counterpart?.MsgId;
+            }
+
             // «Шапку» ставим первой строкой; если есть текст/подпись — перед ней с переносом.
             var header = BuildHeader(messenger, senderName);
             var prefix = string.IsNullOrEmpty(message.Caption.Text) ? header : $"{header}\n";
-            var payload = message.WithCaptionPrefix(prefix);
+            var payload = message.WithCaptionPrefix(prefix, targetReplyId);
 
-            await client.SendChatMessageAsync(targetChatId, payload, ct);
+            var sentId = await client.SendChatMessageAsync(targetChatId, payload, ct);
+
+            // Запоминаем связку «оригинал ↔ пересланная копия» для будущих ответов.
+            if (sentId is not null && message.SourceMessageId is { } sourceId)
+                await StoreMappingAsync(messenger, chatId, sourceId, targetChatId, sentId, ct);
 
             _logger.LogInformation("Переслано сообщение {FromMessenger}:{FromChatId} -> {ToMessenger}:{ToChatId} (вложений: {Count}).",
                 messenger, chatId, targetMessenger, targetChatId, message.Attachments.Count);
@@ -87,6 +103,18 @@ public sealed class MessageRelayService
         return string.IsNullOrWhiteSpace(senderName)
             ? $"👤 · (из {sourceTag})"
             : $"👤 {senderName} · (из {sourceTag})";
+    }
+
+    /// <summary>Сохраняет соответствие оригинала (источник) и пересланной копии (цель) в карту.</summary>
+    private Task StoreMappingAsync(
+        MessengerType sourceMessenger, string sourceChatId, string sourceMsgId,
+        string targetChatId, string targetMsgId, CancellationToken ct)
+    {
+        var maxChatId = sourceMessenger == MessengerType.Max ? sourceChatId : targetChatId;
+        var maxMsgId = sourceMessenger == MessengerType.Max ? sourceMsgId : targetMsgId;
+        var tgChatId = sourceMessenger == MessengerType.Telegram ? sourceChatId : targetChatId;
+        var tgMsgId = sourceMessenger == MessengerType.Telegram ? sourceMsgId : targetMsgId;
+        return _messageLinks.AddAsync(maxChatId, maxMsgId, tgChatId, tgMsgId, ct);
     }
 
     private static bool AllowsDirection(ChatLink link, MessengerType source) => link.Direction switch

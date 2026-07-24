@@ -109,24 +109,25 @@ public sealed class MaxApiClient : IMessengerApiClient
     /// и прикрепляется своим типом; подпись (с «шапкой») ставится только на первое вложение.
     /// Если родная отправка вложения не удалась — откат на отправку файлом (type=file).
     /// </summary>
-    public async Task SendChatMessageAsync(string chatId, RelayMessage message, CancellationToken ct)
+    public async Task<string?> SendChatMessageAsync(string chatId, RelayMessage message, CancellationToken ct)
     {
         if (!message.HasMedia)
-        {
-            await SendMessageBodyAsync(chatId, message.Caption, attachments: null, ct);
-            return;
-        }
+            return await SendMessageBodyAsync(chatId, message.Caption, attachments: null, message.ReplyToTargetMessageId, ct);
 
+        string? firstId = null;
         var captionConsumed = false;
         foreach (var att in message.Attachments)
         {
             var caption = captionConsumed ? FormattedText.Plain(string.Empty) : message.Caption;
-            await SendOneAttachmentAsync(chatId, att, caption, ct);
+            var replyMid = captionConsumed ? null : message.ReplyToTargetMessageId;
+            var mid = await SendOneAttachmentAsync(chatId, att, caption, replyMid, ct);
+            firstId ??= mid;
             captionConsumed = true;
         }
+        return firstId;
     }
 
-    private async Task SendOneAttachmentAsync(string chatId, MediaAttachment att, FormattedText caption, CancellationToken ct)
+    private async Task<string?> SendOneAttachmentAsync(string chatId, MediaAttachment att, FormattedText caption, string? replyMid, CancellationToken ct)
     {
         var maxType = MapType(att.Kind);
         var path = att.FilePath;
@@ -151,13 +152,13 @@ public sealed class MaxApiClient : IMessengerApiClient
             try
             {
                 var attach = await UploadAsync(maxType, path, fileName, mime, ct);
-                await SendMessageBodyAsync(chatId, caption, [attach], ct);
+                return await SendMessageBodyAsync(chatId, caption, [attach], replyMid, ct);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "MAX: не удалось отправить {Kind} как {MaxType}, откат на файл.", att.Kind, maxType);
                 var attach = await UploadAsync("file", att.FilePath, att.FileName ?? Path.GetFileName(att.FilePath), att.MimeType, ct);
-                await SendMessageBodyAsync(chatId, caption, [attach], ct);
+                return await SendMessageBodyAsync(chatId, caption, [attach], replyMid, ct);
             }
         }
         finally
@@ -224,15 +225,20 @@ public sealed class MaxApiClient : IMessengerApiClient
         return string.IsNullOrWhiteSpace(raw) ? new MaxUploadResult() : JsonSerializer.Deserialize<MaxUploadResult>(raw);
     }
 
-    /// <summary>Отправка тела сообщения (текст+вложения). Ретраи на 400, пока медиа обрабатывается сервером.</summary>
-    private async Task SendMessageBodyAsync(string chatId, FormattedText caption, List<MaxAttachmentRequest>? attachments, CancellationToken ct)
+    /// <summary>
+    /// Отправка тела сообщения (текст+вложения, опционально ответ). Ретраи на 400, пока медиа
+    /// обрабатывается сервером. Возвращает mid отправленного сообщения (для карты ответов) или null.
+    /// </summary>
+    private async Task<string?> SendMessageBodyAsync(
+        string chatId, FormattedText caption, List<MaxAttachmentRequest>? attachments, string? replyMid, CancellationToken ct)
     {
         var (text, format) = MaxFormatting.ToRequestText(caption);
         var body = new MaxSendMessageRequest
         {
             Text = string.IsNullOrEmpty(text) ? null : text,
             Format = format,
-            Attachments = attachments
+            Attachments = attachments,
+            Link = string.IsNullOrEmpty(replyMid) ? null : new MaxNewMessageLink { Type = "reply", Mid = replyMid }
         };
 
         var url = $"{BaseUrl}/messages?chat_id={chatId}";
@@ -240,7 +246,12 @@ public sealed class MaxApiClient : IMessengerApiClient
         {
             using var response = await _http.PostAsJsonAsync(url, body, ct);
             if (response.IsSuccessStatusCode)
-                return;
+            {
+                var ok = await response.Content.ReadAsStringAsync(ct);
+                return string.IsNullOrWhiteSpace(ok)
+                    ? null
+                    : JsonSerializer.Deserialize<MaxSendMessageResponse>(ok)?.Message?.Body?.Mid;
+            }
 
             // 400 при наличии вложений — вероятно, файл ещё не обработан. Ждём и повторяем.
             if ((int)response.StatusCode == 400 && attachments is { Count: > 0 } && attempt < SendAttempts)
@@ -252,7 +263,7 @@ public sealed class MaxApiClient : IMessengerApiClient
             var err = await response.Content.ReadAsStringAsync(ct);
             _logger.LogError("MAX: отправка сообщения не удалась ({Status}): {Body}", response.StatusCode, err);
             response.EnsureSuccessStatusCode();
-            return;
+            return null;
         }
     }
 

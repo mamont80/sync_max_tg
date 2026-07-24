@@ -176,7 +176,9 @@ public sealed class TelegramBotService : BackgroundService
         return new RelayMessage
         {
             Caption = caption,
-            Attachments = attachment is null ? [] : [attachment]
+            Attachments = attachment is null ? [] : [attachment],
+            SourceMessageId = message.MessageId.ToString(),
+            ReplyToSourceMessageId = message.ReplyToMessage?.MessageId.ToString()
         };
     }
 

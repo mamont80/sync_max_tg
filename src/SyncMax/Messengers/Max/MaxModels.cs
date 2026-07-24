@@ -44,6 +44,21 @@ public sealed class MaxMessage
     /// <summary>Чат/канал, в котором получено сообщение (id + тип).</summary>
     [JsonPropertyName("recipient")]
     public MaxRecipient? Recipient { get; set; }
+
+    /// <summary>Связанное сообщение — ответ (reply) или пересылка (forward), если есть.</summary>
+    [JsonPropertyName("link")]
+    public MaxLinkedMessage? Link { get; set; }
+}
+
+/// <summary>Связанное сообщение: ответ/пересылка. Для reply в <see cref="Message"/> лежит тело исходного (с mid).</summary>
+public sealed class MaxLinkedMessage
+{
+    /// <summary>"reply" | "forward".</summary>
+    [JsonPropertyName("type")]
+    public string? Type { get; set; }
+
+    [JsonPropertyName("message")]
+    public MaxMessageBody? Message { get; set; }
 }
 
 /// <summary>Получатель сообщения — чат, в котором оно отправлено.</summary>
@@ -87,6 +102,10 @@ public sealed class MaxUser
 
 public sealed class MaxMessageBody
 {
+    /// <summary>Уникальный идентификатор сообщения (нужен для карты ответов).</summary>
+    [JsonPropertyName("mid")]
+    public string? Mid { get; set; }
+
     [JsonPropertyName("text")]
     public string? Text { get; set; }
 
@@ -168,6 +187,30 @@ public sealed class MaxSendMessageRequest
     [JsonPropertyName("attachments")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<MaxAttachmentRequest>? Attachments { get; set; }
+
+    /// <summary>Связь с другим сообщением (для ответа — type="reply", mid исходного).</summary>
+    [JsonPropertyName("link")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MaxNewMessageLink? Link { get; set; }
+}
+
+/// <summary>Ссылка на другое сообщение при отправке (ответ/пересылка).</summary>
+public sealed class MaxNewMessageLink
+{
+    /// <summary>"reply" | "forward".</summary>
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "reply";
+
+    /// <summary>mid сообщения, на которое ссылаемся.</summary>
+    [JsonPropertyName("mid")]
+    public string Mid { get; set; } = string.Empty;
+}
+
+/// <summary>Ответ POST /messages — отправленное сообщение (нужен его mid для карты ответов).</summary>
+public sealed class MaxSendMessageResponse
+{
+    [JsonPropertyName("message")]
+    public MaxMessage? Message { get; set; }
 }
 
 /// <summary>Запрос на прикрепление вложения к сообщению (после загрузки бинарника).</summary>

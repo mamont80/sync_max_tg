@@ -133,7 +133,7 @@ public sealed class MaxBotService : BackgroundService
             if (message.Sender.IsBot == true)
                 return;
 
-            var relay = await BuildRelayMessageAsync(message.Body, ct);
+            var relay = await BuildRelayMessageAsync(message, ct);
             if (relay.IsEmpty)
                 return;
 
@@ -146,8 +146,9 @@ public sealed class MaxBotService : BackgroundService
     /// (текст + markup) и медиа-вложения, скачанные во временные файлы по прямым url. Вложения,
     /// которые не удалось скачать или тип которых не поддерживается, опускаются.
     /// </summary>
-    private async Task<RelayMessage> BuildRelayMessageAsync(MaxMessageBody? body, CancellationToken ct)
+    private async Task<RelayMessage> BuildRelayMessageAsync(MaxMessage message, CancellationToken ct)
     {
+        var body = message.Body;
         var caption = MaxFormatting.ToFormattedText(body);
 
         var attachments = new List<MediaAttachment>();
@@ -158,7 +159,16 @@ public sealed class MaxBotService : BackgroundService
                 attachments.Add(media);
         }
 
-        return new RelayMessage { Caption = caption, Attachments = attachments };
+        // Ответ (reply) — берём mid исходного сообщения из link (forward нас не интересует).
+        var replyToMid = message.Link is { Type: "reply", Message.Mid: { } mid } ? mid : null;
+
+        return new RelayMessage
+        {
+            Caption = caption,
+            Attachments = attachments,
+            SourceMessageId = body?.Mid,
+            ReplyToSourceMessageId = replyToMid
+        };
     }
 
     private async Task<MediaAttachment?> TryDownloadAttachmentAsync(MaxAttachment attachment, CancellationToken ct)

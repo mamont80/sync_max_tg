@@ -52,12 +52,31 @@ public sealed class RelayMessage
 
     public IReadOnlyList<MediaAttachment> Attachments { get; init; } = [];
 
+    /// <summary>Id исходного сообщения в его мессенджере (Telegram message_id / MAX mid).</summary>
+    public string? SourceMessageId { get; init; }
+
+    /// <summary>Id сообщения-оригинала, на которое отвечает исходное (в его мессенджере), если это ответ.</summary>
+    public string? ReplyToSourceMessageId { get; init; }
+
+    /// <summary>Id сообщения в ЦЕЛЕВОМ чате, на которое надо оформить ответ (проставляет relay).</summary>
+    public string? ReplyToTargetMessageId { get; init; }
+
     public bool HasMedia => Attachments.Count > 0;
 
     /// <summary>Есть ли что пересылать вообще (хоть текст, хоть вложение).</summary>
     public bool IsEmpty => Attachments.Count == 0 && string.IsNullOrEmpty(Caption.Text);
 
-    /// <summary>Копия с добавленной в начало подписи служебной «шапкой» (см. relay).</summary>
-    public RelayMessage WithCaptionPrefix(string prefix) =>
-        new() { Caption = Caption.WithPrefix(prefix), Attachments = Attachments };
+    /// <summary>
+    /// Копия с добавленной в начало подписи служебной «шапкой» и разрешённым целевым id ответа
+    /// (см. relay). Остальные поля переносятся как есть.
+    /// </summary>
+    public RelayMessage WithCaptionPrefix(string prefix, string? replyToTargetMessageId) =>
+        new()
+        {
+            Caption = Caption.WithPrefix(prefix),
+            Attachments = Attachments,
+            SourceMessageId = SourceMessageId,
+            ReplyToSourceMessageId = ReplyToSourceMessageId,
+            ReplyToTargetMessageId = replyToTargetMessageId
+        };
 }

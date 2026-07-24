@@ -26,7 +26,9 @@ public interface IMessengerApiClient
     /// для пересылки между связанными чатами. Каждый клиент кодирует содержимое по-своему
     /// (Telegram — entities + родные Send*, MAX — markdown + upload-flow вложений), исходя
     /// из платформо-независимого <see cref="RelayMessage"/>. Вложения читаются из временных
-    /// файлов на диске (см. <see cref="MediaAttachment.FilePath"/>).
+    /// файлов на диске (см. <see cref="MediaAttachment.FilePath"/>). При наличии
+    /// <see cref="RelayMessage.ReplyToTargetMessageId"/> первое сообщение оформляется как ответ.
+    /// Возвращает id первого отправленного сообщения (для карты ответов) или null.
     /// </summary>
-    Task SendChatMessageAsync(string chatId, RelayMessage message, CancellationToken ct);
+    Task<string?> SendChatMessageAsync(string chatId, RelayMessage message, CancellationToken ct);
 }

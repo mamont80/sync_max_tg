@@ -1,10 +1,12 @@
 using Dapper;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using SyncMax.Configuration;
 using SyncMax.Data;
 using SyncMax.Data.Migrations;
 using SyncMax.Data.Repositories;
+using SyncMax.Logging;
 using SyncMax.Messengers;
 using SyncMax.Messengers.Max;
 using SyncMax.Messengers.Telegram;
@@ -15,6 +17,9 @@ try
     DefaultTypeMap.MatchNamesWithUnderscores = true;
 
     var builder = Host.CreateApplicationBuilder(args);
+
+    // --- Логирование: консоль (по умолчанию от хоста) + дублирование в файл (logs/syncmax-*.log). ---
+    builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(AppContext.BaseDirectory, "logs")));
 
     // --- Конфигурация ---
     builder.Services.Configure<TelegramOptions>(builder.Configuration.GetSection(TelegramOptions.Section));
@@ -27,11 +32,13 @@ try
     builder.Services.AddSingleton<SqliteConnectionFactory>();
     builder.Services.AddSingleton<UserRepository>();
     builder.Services.AddSingleton<ChatLinkRepository>();
+    builder.Services.AddSingleton<MessageLinkRepository>();
 
     // --- Миграции (регистрируйте здесь новые версии по возрастанию) ---
     builder.Services.AddSingleton<IMigration, M001_InitialSchema>();
     builder.Services.AddSingleton<IMigration, M002_AddLinkedToUser>();
     builder.Services.AddSingleton<IMigration, M003_ChatLinks>();
+    builder.Services.AddSingleton<IMigration, M004_MessageLinks>();
     builder.Services.AddSingleton<MigrationRunner>();
 
     // --- Сервисы ---

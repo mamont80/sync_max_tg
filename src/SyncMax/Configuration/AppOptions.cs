@@ -6,6 +6,12 @@ public sealed class TelegramOptions
     public const string Section = "Telegram";
 
     public string Token { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Базовый URL Bot API. Пусто — официальный сервер (https://api.telegram.org).
+    /// Задаётся для собственного (локального) Bot API сервера, напр. http://localhost:8081.
+    /// </summary>
+    public string ApiBaseUrl { get; set; } = string.Empty;
 }
 
 /// <summary>Настройки MAX-бота. Токен подставляется в appsettings.json (оставлен пустым).</summary>
