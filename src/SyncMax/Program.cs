@@ -21,6 +21,7 @@ try
     builder.Services.Configure<MaxOptions>(builder.Configuration.GetSection(MaxOptions.Section));
     builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(DatabaseOptions.Section));
     builder.Services.Configure<LinkingOptions>(builder.Configuration.GetSection(LinkingOptions.Section));
+    builder.Services.Configure<MediaOptions>(builder.Configuration.GetSection(MediaOptions.Section));
 
     // --- Данные ---
     builder.Services.AddSingleton<SqliteConnectionFactory>();
@@ -39,6 +40,7 @@ try
     builder.Services.AddSingleton<ChatLinkingService>();
     builder.Services.AddSingleton<SystemCommandService>();
     builder.Services.AddSingleton<MessageRelayService>();
+    builder.Services.AddSingleton<MediaConverter>();
 
     // --- Клиенты API мессенджеров: общий контракт IMessengerApiClient (отправка) ---
     builder.Services.AddSingleton<TelegramApiClient>();
@@ -47,11 +49,23 @@ try
     builder.Services.AddHttpClient<MaxApiClient>()
         .ConfigurePrimaryHttpMessageHandler(() =>
         {
-            var handler = new HttpClientHandler();
+            // AutomaticDecompression: MAX может отдавать крупные ответы (напр. сообщение с
+            // аудио) в gzip; без разжатия они читались бы как «мусор» и терялись при разборе.
+            var handler = new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.All };
             MaxTrustedCertificates.ConfigureValidation(handler);
             return handler;
         });
     builder.Services.AddSingleton<IMessengerApiClient>(sp => sp.GetRequiredService<MaxApiClient>());
+
+    // Отдельный клиент для скачивания/загрузки медиа MAX (CDN): тот же TLS-handler
+    // (доверие Russian CA), но без заголовка Authorization API.
+    builder.Services.AddHttpClient(MaxApiClient.MediaHttpClientName)
+        .ConfigurePrimaryHttpMessageHandler(() =>
+        {
+            var handler = new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.All };
+            MaxTrustedCertificates.ConfigureValidation(handler);
+            return handler;
+        });
 
     // --- *BotService: только приём и разбор входящих обновлений (long polling) ---
     builder.Services.AddSingleton<TelegramBotService>();

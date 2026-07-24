@@ -133,29 +133,89 @@ public sealed class TelegramBotService : BackgroundService
         //Это сообщение в группу
         if (message.Chat.Type == ChatType.Group || message.Chat.Type == ChatType.Supergroup)
         {
-            if (message.Text is { } groupText)
+            var chatId = message.Chat.Id.ToString();
+            var command = message.Text?.Trim().ToLower();
+            if (command == "/link")
             {
-                var chatId = message.Chat.Id.ToString();
-                if (groupText.Trim().ToLower() == "/link")
+                var userId = message.From?.Id.ToString();
+                var chatTitle = message.Chat.Title;
+                if (!string.IsNullOrEmpty(userId))
                 {
-                    var userId = message.From?.Id.ToString();
-                    var chatTitle = message.Chat.Title;
-                    if (!string.IsNullOrEmpty(userId))
-                    {
-                        await _chatLinking.HandleRepostAsync(MessengerType.Telegram, userId, chatId, ChatKind.Chat, chatTitle, ct);
-                    }
-                    else _logger.LogWarning($"На команде /link пользователь не определён ChatTitle:{message.Chat.Title}");
+                    await _chatLinking.HandleRepostAsync(MessengerType.Telegram, userId, chatId, ChatKind.Chat, chatTitle, ct);
                 }
-                else if (message.From?.IsBot != true)
-                {
-                    // Сообщения от ботов (не только от себя самого, но и от любых других
-                    // ботов в группе) не пересылаем — это не пользовательский контент.
-                    var senderName = TelegramApiClient.BuildDisplayName(message.From);
-                    var body = TelegramFormatting.ToFormattedText(groupText, message.Entities);
-                    await _relay.RelayTextAsync(MessengerType.Telegram, chatId, senderName, body, ct);
-                }
+                else _logger.LogWarning($"На команде /link пользователь не определён ChatTitle:{message.Chat.Title}");
+                return;
             }
+
+            // Сообщения от ботов (не только от себя самого, но и от любых других
+            // ботов в группе) не пересылаем — это не пользовательский контент.
+            if (message.From?.IsBot == true)
+                return;
+
+            var relay = await BuildRelayMessageAsync(message, ct);
+            if (relay.IsEmpty)
+                return;
+
+            var senderName = TelegramApiClient.BuildDisplayName(message.From);
+            await _relay.RelayMessageAsync(MessengerType.Telegram, chatId, senderName, relay, ct);
         }
+    }
+
+    /// <summary>
+    /// Строит платформо-независимое <see cref="RelayMessage"/> из сообщения Telegram: подпись
+    /// (текст или caption + entities) и, если есть, одно медиа-вложение, скачанное во временный
+    /// файл. Если скачать вложение не удалось — оно опускается (текст всё равно перешлётся).
+    /// </summary>
+    private async Task<RelayMessage> BuildRelayMessageAsync(Message message, CancellationToken ct)
+    {
+        var text = message.Text ?? message.Caption ?? string.Empty;
+        var entities = message.Entities ?? message.CaptionEntities;
+        var caption = TelegramFormatting.ToFormattedText(text, entities);
+
+        var attachment = await TryDownloadMediaAsync(message, ct);
+        return new RelayMessage
+        {
+            Caption = caption,
+            Attachments = attachment is null ? [] : [attachment]
+        };
+    }
+
+    /// <summary>Определяет тип медиа в сообщении, скачивает его во временный файл и возвращает вложение (или null).</summary>
+    private async Task<MediaAttachment?> TryDownloadMediaAsync(Message message, CancellationToken ct)
+    {
+        // Порядок важен: анимация в Telegram дублируется и в Document, поэтому проверяется раньше.
+        if (message.Photo is { Length: > 0 } photo)
+            return await MakeAttachmentAsync(photo[^1].FileId, MediaKind.Photo, ".jpg", null, "image/jpeg", ct);
+        if (message.Animation is { } animation)
+            return await MakeAttachmentAsync(animation.FileId, MediaKind.Animation, Ext(animation.FileName, ".mp4"), animation.FileName, animation.MimeType, ct);
+        if (message.Video is { } video)
+            return await MakeAttachmentAsync(video.FileId, MediaKind.Video, Ext(video.FileName, ".mp4"), video.FileName, video.MimeType, ct);
+        if (message.VideoNote is { } videoNote)
+            return await MakeAttachmentAsync(videoNote.FileId, MediaKind.VideoNote, ".mp4", null, "video/mp4", ct);
+        if (message.Voice is { } voice)
+            return await MakeAttachmentAsync(voice.FileId, MediaKind.Voice, ".ogg", null, voice.MimeType ?? "audio/ogg", ct);
+        if (message.Audio is { } audio)
+            return await MakeAttachmentAsync(audio.FileId, MediaKind.Audio, Ext(audio.FileName, ".mp3"), audio.FileName, audio.MimeType, ct);
+        if (message.Document is { } document)
+            return await MakeAttachmentAsync(document.FileId, MediaKind.Document, Ext(document.FileName, ".bin"), document.FileName, document.MimeType, ct);
+        return null;
+    }
+
+    private async Task<MediaAttachment?> MakeAttachmentAsync(
+        string fileId, MediaKind kind, string extension, string? fileName, string? mimeType, CancellationToken ct)
+    {
+        var path = await _client.DownloadFileToTempAsync(fileId, extension, ct);
+        if (path is null)
+            return null;
+
+        return new MediaAttachment { Kind = kind, FilePath = path, FileName = fileName, MimeType = mimeType };
+    }
+
+    /// <summary>Расширение из имени файла, иначе — запасное.</summary>
+    private static string Ext(string? fileName, string fallback)
+    {
+        var ext = Path.GetExtension(fileName ?? string.Empty);
+        return string.IsNullOrEmpty(ext) ? fallback : ext;
     }
 
     /// <summary>Пишет в лог полный входящий апдейт (сырой JSON) — для отладки.</summary>

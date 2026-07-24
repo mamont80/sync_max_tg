@@ -2,7 +2,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SyncMax.Configuration;
 using SyncMax.Models;
+using SyncMax.Services;
 using Telegram.Bot;
+using Telegram.Bot.Types;
 using TelegramUser = Telegram.Bot.Types.User;
 
 namespace SyncMax.Messengers.Telegram;
@@ -46,10 +48,13 @@ public sealed class TelegramApiClient : IMessengerApiClient
     }
 
     /// <summary>
-    /// В Telegram Bot API id пользователя и id чата/группы — одно адресное пространство
-    /// (chat_id). Форматирование передаётся через entities (без parse_mode и экранирования).
+    /// Отправка сообщения (текст и/или медиа) в чат/группу. В Telegram id пользователя и
+    /// чата — одно адресное пространство (chat_id). Форматирование — через entities (без
+    /// parse_mode и экранирования). Каждое вложение шлётся своим родным методом; подпись
+    /// (с «шапкой») ставится только на первое вложение. Если родная отправка не удалась —
+    /// откат на отправку документом.
     /// </summary>
-    public async Task SendChatTextAsync(string chatId, FormattedText content, CancellationToken ct)
+    public async Task SendChatMessageAsync(string chatId, RelayMessage message, CancellationToken ct)
     {
         if (BotClient is not { } bot)
         {
@@ -57,8 +62,103 @@ public sealed class TelegramApiClient : IMessengerApiClient
             return;
         }
 
-        await bot.SendMessage(
-            long.Parse(chatId), content.Text, entities: TelegramFormatting.ToEntities(content), cancellationToken: ct);
+        var id = long.Parse(chatId);
+
+        if (!message.HasMedia)
+        {
+            await bot.SendMessage(id, message.Caption.Text,
+                entities: TelegramFormatting.ToEntities(message.Caption), cancellationToken: ct);
+            return;
+        }
+
+        var captionConsumed = false;
+        foreach (var att in message.Attachments)
+        {
+            var caption = captionConsumed ? null : message.Caption;
+
+            // video_note не поддерживает подпись — «шапку» шлём отдельным сообщением до кружка.
+            if (att.Kind == MediaKind.VideoNote)
+            {
+                if (caption is { Text.Length: > 0 })
+                    await bot.SendMessage(id, caption.Text, entities: TelegramFormatting.ToEntities(caption), cancellationToken: ct);
+                captionConsumed = true;
+                await SendMediaAsync(bot, id, att, null, ct);
+                continue;
+            }
+
+            await SendMediaAsync(bot, id, att, caption, ct);
+            if (caption is not null)
+                captionConsumed = true;
+        }
+    }
+
+    /// <summary>Отправляет одно вложение родным методом Telegram; при ошибке — откат на документ.</summary>
+    private async Task SendMediaAsync(ITelegramBotClient bot, long id, MediaAttachment att, FormattedText? caption, CancellationToken ct)
+    {
+        var text = caption?.Text is { Length: > 0 } t ? t : null;
+        var entities = caption is null ? null : TelegramFormatting.ToEntities(caption);
+        var name = att.FileName ?? Path.GetFileName(att.FilePath);
+
+        try
+        {
+            await using var fs = File.OpenRead(att.FilePath);
+            var input = InputFile.FromStream(fs, name);
+            switch (att.Kind)
+            {
+                case MediaKind.Photo:
+                    await bot.SendPhoto(id, input, caption: text, captionEntities: entities, cancellationToken: ct);
+                    break;
+                case MediaKind.Video:
+                    await bot.SendVideo(id, input, caption: text, captionEntities: entities, cancellationToken: ct);
+                    break;
+                case MediaKind.Animation:
+                    await bot.SendAnimation(id, input, caption: text, captionEntities: entities, cancellationToken: ct);
+                    break;
+                case MediaKind.Voice:
+                    await bot.SendVoice(id, input, caption: text, captionEntities: entities, cancellationToken: ct);
+                    break;
+                case MediaKind.Audio:
+                    await bot.SendAudio(id, input, caption: text, captionEntities: entities, cancellationToken: ct);
+                    break;
+                case MediaKind.VideoNote:
+                    await bot.SendVideoNote(id, input, cancellationToken: ct);
+                    break;
+                default:
+                    await bot.SendDocument(id, input, caption: text, captionEntities: entities, cancellationToken: ct);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Telegram: не удалось отправить {Kind} штатно, откат на документ.", att.Kind);
+            await using var fs = File.OpenRead(att.FilePath);
+            var input = InputFile.FromStream(fs, name);
+            await bot.SendDocument(id, input, caption: text, captionEntities: entities, cancellationToken: ct);
+        }
+    }
+
+    /// <summary>
+    /// Скачивает файл Telegram по file_id во временный файл на диске. null, если скачать не
+    /// удалось (в т.ч. лимит Bot API 20 МБ на скачивание). Расширение — подсказка для имени.
+    /// </summary>
+    public async Task<string?> DownloadFileToTempAsync(string fileId, string? extension, CancellationToken ct)
+    {
+        if (BotClient is not { } bot)
+            return null;
+
+        var path = TempFiles.NewPath(extension);
+        try
+        {
+            await using var fs = File.Create(path);
+            await bot.GetInfoAndDownloadFile(fileId, fs, ct);
+            return path;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Telegram: не удалось скачать файл {FileId} (возможно, превышен лимит 20 МБ).", fileId);
+            TempFiles.TryDelete(path);
+            return null;
+        }
     }
 
     /// <summary>

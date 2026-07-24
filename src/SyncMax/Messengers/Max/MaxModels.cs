@@ -97,6 +97,35 @@ public sealed class MaxMessageBody
     /// </summary>
     [JsonPropertyName("markup")]
     public List<MaxMarkupElement>? Markup { get; set; }
+
+    /// <summary>Медиа-вложения сообщения (image/video/audio/file/sticker/...).</summary>
+    [JsonPropertyName("attachments")]
+    public List<MaxAttachment>? Attachments { get; set; }
+}
+
+/// <summary>Входящее вложение MAX. Для всех медиа-типов payload содержит прямой url для скачивания.</summary>
+public sealed class MaxAttachment
+{
+    /// <summary>"image" | "video" | "audio" | "file" | "sticker" | "share" | "location" | ...</summary>
+    [JsonPropertyName("type")]
+    public string? Type { get; set; }
+
+    [JsonPropertyName("payload")]
+    public MaxAttachmentPayload? Payload { get; set; }
+
+    /// <summary>Имя файла — только для type == "file".</summary>
+    [JsonPropertyName("filename")]
+    public string? Filename { get; set; }
+}
+
+public sealed class MaxAttachmentPayload
+{
+    /// <summary>Прямая ссылка на содержимое вложения (image/video/audio/file).</summary>
+    [JsonPropertyName("url")]
+    public string? Url { get; set; }
+
+    [JsonPropertyName("token")]
+    public string? Token { get; set; }
 }
 
 /// <summary>Один участок разметки входящего сообщения MAX (см. MarkupElement в Bot API).</summary>
@@ -118,11 +147,13 @@ public sealed class MaxMarkupElement
     public string? Url { get; set; }
 }
 
-/// <summary>Тело запроса на отправку сообщения.</summary>
+/// <summary>Тело запроса на отправку сообщения (NewMessageBody).</summary>
 public sealed class MaxSendMessageRequest
 {
+    /// <summary>Текст/подпись. Может отсутствовать, если сообщение состоит только из вложений.</summary>
     [JsonPropertyName("text")]
-    public string Text { get; set; } = string.Empty;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Text { get; set; }
 
     /// <summary>
     /// Формат разметки в <see cref="Text"/>: "markdown" | "html". null — текст без разметки
@@ -132,4 +163,59 @@ public sealed class MaxSendMessageRequest
     [JsonPropertyName("format")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Format { get; set; }
+
+    /// <summary>Прикрепляемые вложения (после загрузки — по token/photos).</summary>
+    [JsonPropertyName("attachments")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<MaxAttachmentRequest>? Attachments { get; set; }
+}
+
+/// <summary>Запрос на прикрепление вложения к сообщению (после загрузки бинарника).</summary>
+public sealed class MaxAttachmentRequest
+{
+    /// <summary>"image" | "video" | "audio" | "file".</summary>
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = string.Empty;
+
+    [JsonPropertyName("payload")]
+    public MaxAttachmentRequestPayload Payload { get; set; } = new();
+}
+
+/// <summary>Payload запроса вложения: token (video/audio/file) или photos-map (image).</summary>
+public sealed class MaxAttachmentRequestPayload
+{
+    [JsonPropertyName("token")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Token { get; set; }
+
+    /// <summary>Токены загруженных изображений (ключ → {token}); только для type == "image".</summary>
+    [JsonPropertyName("photos")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, MaxPhotoToken>? Photos { get; set; }
+}
+
+public sealed class MaxPhotoToken
+{
+    [JsonPropertyName("token")]
+    public string Token { get; set; } = string.Empty;
+}
+
+/// <summary>Ответ POST /uploads: url для загрузки и (для video/audio) готовый token.</summary>
+public sealed class MaxUploadEndpoint
+{
+    [JsonPropertyName("url")]
+    public string? Url { get; set; }
+
+    [JsonPropertyName("token")]
+    public string? Token { get; set; }
+}
+
+/// <summary>Тело ответа сервера загрузки: token (file/video/audio) или photos-map (image).</summary>
+public sealed class MaxUploadResult
+{
+    [JsonPropertyName("token")]
+    public string? Token { get; set; }
+
+    [JsonPropertyName("photos")]
+    public Dictionary<string, MaxPhotoToken>? Photos { get; set; }
 }

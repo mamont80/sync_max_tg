@@ -8,7 +8,9 @@ namespace SyncMax.Services;
 /// <summary>
 /// Третий этап: пересылка сообщений между уже связанными чатами/каналами MAX и Telegram
 /// (см. <see cref="ChatLinkingService"/> — второй этап, создание самой связки).
-/// Пока поддерживаются только текстовые сообщения.
+/// Поддерживаются текст (с форматированием) и медиа: фото, видео, голос, аудио, анимации,
+/// «кружки» video_note, файлы. Сами вложения скачиваются вызывающим *BotService во временные
+/// файлы; этот сервис после отправки их удаляет.
 ///
 /// Как и остальные Handle*-сервисы, не зависит от платформы и не знает о *BotService —
 /// работает только через <see cref="IMessengerApiClient"/> и <see cref="ChatLinkRepository"/>.
@@ -28,37 +30,50 @@ public sealed class MessageRelayService
     }
 
     /// <summary>
-    /// Пересылает текстовое сообщение из чата <paramref name="chatId"/> (мессенджер
-    /// <paramref name="messenger"/>) в связанный чат второго мессенджера, если такая
-    /// активная связка есть и её направление (<see cref="RepostDirection"/>) это разрешает.
-    /// Если связки нет — тихо ничего не делает (это обычный незнакомый чат, не ошибка).
-    /// Форматирование передаётся платформо-независимо (<see cref="FormattedText"/>): вызывающий
-    /// *BotService разобрал СВОЙ формат в участки, а целевой клиент закодирует их в СВОЙ.
+    /// Пересылает сообщение (текст и/или медиа) из чата <paramref name="chatId"/> (мессенджер
+    /// <paramref name="messenger"/>) в связанный чат второго мессенджера, если такая активная
+    /// связка есть и её направление (<see cref="RepostDirection"/>) это разрешает. Если связки
+    /// нет — тихо ничего не делает (обычный незнакомый чат, не ошибка). Форматирование и медиа
+    /// передаются платформо-независимо (<see cref="RelayMessage"/>): вызывающий *BotService
+    /// разобрал СВОЙ формат и скачал вложения, а целевой клиент закодирует/загрузит их в СВОЙ.
+    /// Временные файлы вложений удаляются здесь по завершении (в любом исходе).
     /// Решение, стоит ли вообще звать этот метод для сообщения от бота (не только своего,
     /// но и любого чужого), принимает вызывающий *BotService — у него есть данные конкретной
     /// платформы об отправителе, а этот сервис от платформы не зависит.
     /// </summary>
-    public async Task RelayTextAsync(
-        MessengerType messenger, string chatId, string? senderName, FormattedText body, CancellationToken ct)
+    public async Task RelayMessageAsync(
+        MessengerType messenger, string chatId, string? senderName, RelayMessage message, CancellationToken ct)
     {
-        var link = await _chatLinks.FindActiveByChatAsync(messenger, chatId, ct);
-        if (link is null || !AllowsDirection(link, messenger))
-            return;
-
-        var targetMessenger = Other(messenger);
-        var targetChatId = messenger == MessengerType.Max ? link.TgChatId : link.MaxChatId;
-
-        if (!_clients.TryGetValue(targetMessenger, out var client))
+        try
         {
-            _logger.LogWarning("Нет клиента для мессенджера {Messenger}.", targetMessenger);
-            return;
+            var link = await _chatLinks.FindActiveByChatAsync(messenger, chatId, ct);
+            if (link is null || !AllowsDirection(link, messenger))
+                return;
+
+            var targetMessenger = Other(messenger);
+            var targetChatId = messenger == MessengerType.Max ? link.TgChatId : link.MaxChatId;
+
+            if (!_clients.TryGetValue(targetMessenger, out var client))
+            {
+                _logger.LogWarning("Нет клиента для мессенджера {Messenger}.", targetMessenger);
+                return;
+            }
+
+            // «Шапку» ставим первой строкой; если есть текст/подпись — перед ней с переносом.
+            var header = BuildHeader(messenger, senderName);
+            var prefix = string.IsNullOrEmpty(message.Caption.Text) ? header : $"{header}\n";
+            var payload = message.WithCaptionPrefix(prefix);
+
+            await client.SendChatMessageAsync(targetChatId, payload, ct);
+
+            _logger.LogInformation("Переслано сообщение {FromMessenger}:{FromChatId} -> {ToMessenger}:{ToChatId} (вложений: {Count}).",
+                messenger, chatId, targetMessenger, targetChatId, message.Attachments.Count);
         }
-
-        var payload = body.WithPrefix($"{BuildHeader(messenger, senderName)}\n");
-        await client.SendChatTextAsync(targetChatId, payload, ct);
-
-        _logger.LogInformation("Переслано сообщение {FromMessenger}:{FromChatId} -> {ToMessenger}:{ToChatId}.",
-            messenger, chatId, targetMessenger, targetChatId);
+        finally
+        {
+            foreach (var att in message.Attachments)
+                TempFiles.TryDelete(att.FilePath);
+        }
     }
 
     /// <summary>

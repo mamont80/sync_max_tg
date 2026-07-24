@@ -116,22 +116,87 @@ public sealed class MaxBotService : BackgroundService
         }
 
         //Это сообщение в группу/канал
-        if (message.Recipient is { ChatId: { } chatId2, ChatType: ChatKindExtensions.ChatCode or ChatKindExtensions.ChannelCode } recipient
-            && message.Body?.Text is { } groupText)
+        if (message.Recipient is { ChatId: { } chatId2, ChatType: ChatKindExtensions.ChatCode or ChatKindExtensions.ChannelCode } recipient)
         {
-            if (groupText.Trim().ToLower() == "/link")
+            var chatId2str = chatId2.ToString();
+            var command = message.Body?.Text?.Trim().ToLower();
+            if (command == "/link")
             {
                 var chatKind = recipient.ChatType == ChatKindExtensions.ChannelCode ? ChatKind.Channel : ChatKind.Chat;
                 var chat = await _client.GetChatOrNullAsync(chatId2, ct);
-                await _chatLinking.HandleRepostAsync(MessengerType.Max, userId2, chatId2.ToString(), chatKind, chat?.Title, ct);
+                await _chatLinking.HandleRepostAsync(MessengerType.Max, userId2, chatId2str, chatKind, chat?.Title, ct);
+                return;
             }
-            else if (message.Sender.IsBot != true)
-            {
-                // Сообщения от ботов (не только от себя самого, но и от любых других
-                // ботов в чате) не пересылаем — это не пользовательский контент.
-                var body = MaxFormatting.ToFormattedText(message.Body);
-                await _relay.RelayTextAsync(MessengerType.Max, chatId2.ToString(), message.Sender.Name, body, ct);
-            }
+
+            // Сообщения от ботов (не только от себя самого, но и от любых других
+            // ботов в чате) не пересылаем — это не пользовательский контент.
+            if (message.Sender.IsBot == true)
+                return;
+
+            var relay = await BuildRelayMessageAsync(message.Body, ct);
+            if (relay.IsEmpty)
+                return;
+
+            await _relay.RelayMessageAsync(MessengerType.Max, chatId2str, message.Sender.Name, relay, ct);
         }
+    }
+
+    /// <summary>
+    /// Строит платформо-независимое <see cref="RelayMessage"/> из тела сообщения MAX: подпись
+    /// (текст + markup) и медиа-вложения, скачанные во временные файлы по прямым url. Вложения,
+    /// которые не удалось скачать или тип которых не поддерживается, опускаются.
+    /// </summary>
+    private async Task<RelayMessage> BuildRelayMessageAsync(MaxMessageBody? body, CancellationToken ct)
+    {
+        var caption = MaxFormatting.ToFormattedText(body);
+
+        var attachments = new List<MediaAttachment>();
+        foreach (var a in body?.Attachments ?? [])
+        {
+            var media = await TryDownloadAttachmentAsync(a, ct);
+            if (media is not null)
+                attachments.Add(media);
+        }
+
+        return new RelayMessage { Caption = caption, Attachments = attachments };
+    }
+
+    private async Task<MediaAttachment?> TryDownloadAttachmentAsync(MaxAttachment attachment, CancellationToken ct)
+    {
+        (MediaKind? Kind, string Ext) map = attachment.Type switch
+        {
+            "image" => (MediaKind.Photo, ".jpg"),
+            "video" => (MediaKind.Video, ".mp4"),
+            "audio" => (MediaKind.Audio, ".mp3"),
+            "file" => (MediaKind.Document, FileExt(attachment.Filename, ".bin")),
+            _ => (null, string.Empty) // sticker/share/location/... — не пересылаем
+        };
+        if (map.Kind is not { } kind)
+        {
+            _logger.LogInformation("MAX: вложение type={Type} не поддерживается для пересылки — пропущено.", attachment.Type);
+            return null;
+        }
+
+        if (attachment.Payload?.Url is not { Length: > 0 } url)
+        {
+            _logger.LogWarning("MAX: вложение type={Type} без url (token={HasToken}) — переслать нечем.",
+                attachment.Type, attachment.Payload?.Token is { Length: > 0 });
+            return null;
+        }
+
+        var path = await _client.DownloadUrlToTempAsync(url, map.Ext, ct);
+        if (path is null)
+        {
+            _logger.LogWarning("MAX: не удалось скачать вложение type={Type} — пропущено.", attachment.Type);
+            return null;
+        }
+
+        return new MediaAttachment { Kind = kind, FilePath = path, FileName = attachment.Filename };
+    }
+
+    private static string FileExt(string? fileName, string fallback)
+    {
+        var ext = Path.GetExtension(fileName ?? string.Empty);
+        return string.IsNullOrEmpty(ext) ? fallback : ext;
     }
 }

@@ -44,20 +44,48 @@
 ## Как это работает (пересылка сообщений)
 
 Как только между чатами есть активная связка (`chat_links`, `active = 1`),
-`MessageRelayService` пересылает в связанный чат каждое текстовое сообщение
-(кроме `/link`), пришедшее в один из связанных чатов, — если направление
-(`repost_type`) это разрешает. Сообщение предваряется служебной «шапкой» с
-именем отправителя и меткой источника, а сам текст идёт с новой строки:
+`MessageRelayService` пересылает в связанный чат каждое сообщение (кроме `/link`),
+пришедшее в один из связанных чатов, — если направление (`repost_type`) это
+разрешает. Сообщение предваряется служебной «шапкой» с именем отправителя и
+меткой источника, а сам текст/подпись идёт с новой строки:
 
 ```
 👤 {Имя} · (из TG)
 {текст}
 ```
 
-Пока поддерживаются только текстовые сообщения — фото, файлы и т.д. не пересылаются.
-
 Сообщения, отправленные самим ботом (в т.ч. пересланные им же), не
 обрабатываются повторно — иначе связка при направлении `both` зациклилась бы.
+
+### Медиа
+
+Пересылаются фото, видео, голос, аудио, анимации, «кружки» (video_note) и файлы
+(документы). Всё, что можно, отправляется «родным» типом целевой платформы;
+текст сообщения переносится как подпись к первому вложению.
+
+- **Приём.** `*BotService` скачивает вложение во **временный файл на диске**
+  (не в ОЗУ): Telegram — через `getFile`/download (лимит Bot API — 20 МБ на
+  скачивание), MAX — GET по прямому `url` из вложения. Результат — платформо-
+  независимый `RelayMessage` (подпись `FormattedText` + список `MediaAttachment`).
+- **Отправка.** Целевой клиент кодирует по-своему: Telegram — родными
+  `SendPhoto/Video/Voice/Audio/Animation/VideoNote/Document`; MAX — через
+  upload-flow (`POST /uploads` → загрузка бинарника полем `data` → прикрепление
+  по `token`/`photos`), с повторами на `400`, пока сервер обрабатывает файл.
+- **Временные файлы** удаляются `MessageRelayService` после отправки (в любом исходе).
+
+Соответствие типов для MAX (там нет анимаций/кружков/голоса как отдельных типов):
+фото → `image`, видео/анимация/video_note → `video`, голос/аудио → `audio`,
+документ → `file`.
+
+**Конвертация** разрешена для аудио и фото, но не для видео (`MediaConverter`,
+внешний ffmpeg, путь — `Media:FfmpegPath`). Сейчас используется для перекодирования
+голоса в mp3. Если ffmpeg не найден или конвертация не удалась — файл уходит как
+есть. **Универсальный откат:** если «родная» отправка вложения не удалась, оно
+пересылается как обычный файл/документ (для MAX — `type=file`, для Telegram —
+`SendDocument`).
+
+Крупные вложения ограничены `Media:MaxFileMegabytes` (по умолчанию 45 МБ; для
+Telegram фактический потолок скачивания всё равно 20 МБ — ограничение платформы).
 
 ### Форматирование
 
@@ -166,13 +194,14 @@ src/SyncMax/
   appsettings.json              — токены и настройки (ключи пустые)
   Configuration/                — классы опций
   Models/                       — User, MessengerType, ChatLink, ChatKind, RepostDirection,
-                                   FormattedText (универсальная модель разметки)
+                                   FormattedText (разметка), RelayMessage/MediaAttachment (медиа)
   Data/
     SqliteConnectionFactory.cs
     Migrations/                 — IMigration, MigrationRunner, M001..M003
     Repositories/               — UserRepository, ChatLinkRepository
   Services/                     — LinkingService, ChatLinkingService, MessageRelayService,
-                                   SystemCommandService, CodeGenerator, Localization
+                                   SystemCommandService, MediaConverter, TempFiles,
+                                   CodeGenerator, Localization
   Messengers/
     IMessengerApiClient.cs      — общий интерфейс клиента (отправка текста/медиа)
     Telegram/                   — TelegramApiClient (отправка), TelegramBotService (приём),

@@ -22,12 +22,11 @@ public interface IMessengerApiClient
     Task SendTextAsync(string userId, string text, CancellationToken ct);
 
     /// <summary>
-    /// Отправка форматированного текста в групповой чат/канал по его id — для пересылки
-    /// между связанными чатами. Разметку каждый клиент кодирует по-своему (Telegram —
-    /// entities, MAX — markdown), исходя из платформо-независимого <see cref="FormattedText"/>.
+    /// Отправка сообщения (текст и/или медиа-вложения) в групповой чат/канал по его id —
+    /// для пересылки между связанными чатами. Каждый клиент кодирует содержимое по-своему
+    /// (Telegram — entities + родные Send*, MAX — markdown + upload-flow вложений), исходя
+    /// из платформо-независимого <see cref="RelayMessage"/>. Вложения читаются из временных
+    /// файлов на диске (см. <see cref="MediaAttachment.FilePath"/>).
     /// </summary>
-    Task SendChatTextAsync(string chatId, FormattedText content, CancellationToken ct);
-
-    // Изображения/файлы/видео добавятся сюда по мере реализации в конкретных
-    // клиентах (для MAX пока не описан upload-flow вложений в Bot API).
+    Task SendChatMessageAsync(string chatId, RelayMessage message, CancellationToken ct);
 }
