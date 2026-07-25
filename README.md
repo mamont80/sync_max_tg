@@ -437,18 +437,6 @@ src/SyncMax/
                                    MaxFormatting (markup/markdown ↔ FormattedText)
 ```
 
-## Заметки
-
-- Отправка и приём разделены. `*ApiClient` (`MaxApiClient`, `TelegramApiClient`)
-  реализуют общий интерфейс `IMessengerApiClient` и отвечают только за исходящие
-  запросы к API (текст сейчас; фото/файлы/видео добавятся туда же по мере
-  реализации). `*BotService` (`MaxBotService`, `TelegramBotService`) — фоновые
-  сервисы, которые занимаются только long polling и разбором входящих
-  обновлений; для отправки они не нужны никому, кроме себя самих.
-- `LinkingService` не зависит ни от платформы, ни от `*BotService` — только от
-  `IMessengerApiClient` (получает все реализации через DI и выбирает нужную по
-  `MessengerType`). Добавление нового мессенджера = новый `*ApiClient`,
-  реализующий `IMessengerApiClient`, плюс новый `*BotService` для приёма.
-- DTO-модели MAX (`MaxModels.cs`) и `MaxApiClient` заполнены под типовой формат
-  Bot API MAX (long polling). Если реальные эндпоинты/поля отличаются — правятся
-  только эти два файла.
+Заметки по внутреннему устройству кода (разделение приёма/отправки, DI,
+миграции и т.п.) вынесены в [CLAUDE.md](CLAUDE.md) — они больше про то, как
+работать с кодом, чем про то, как пользоваться ботом.
