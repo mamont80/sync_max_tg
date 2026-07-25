@@ -67,6 +67,20 @@ public sealed class RelayMessage
     public bool IsEmpty => Attachments.Count == 0 && string.IsNullOrEmpty(Caption.Text);
 
     /// <summary>
+    /// Копия с подписью, заменённой на прошедшую модерацию (см. <c>ModerationService</c>).
+    /// Вложения и идентификаторы переносятся как есть.
+    /// </summary>
+    public RelayMessage WithModeratedCaption(FormattedText caption) =>
+        new()
+        {
+            Caption = caption,
+            Attachments = Attachments,
+            SourceMessageId = SourceMessageId,
+            ReplyToSourceMessageId = ReplyToSourceMessageId,
+            ReplyToTargetMessageId = ReplyToTargetMessageId
+        };
+
+    /// <summary>
     /// Копия с добавленной в начало подписи служебной «шапкой» и разрешённым целевым id ответа
     /// (см. relay). Остальные поля переносятся как есть.
     /// </summary>

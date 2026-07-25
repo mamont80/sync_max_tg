@@ -61,6 +61,10 @@ public sealed class TelegramBotService : BackgroundService
         var me = await bot.GetMe(ct);
         _botId = me.Id.ToString();
 
+        // Постоянная кнопка мини-приложения рядом с полем ввода. Настройка живёт на стороне
+        // Telegram, поэтому выставляется один раз при старте, а не в каждом сообщении.
+        await _client.ConfigureMenuButtonAsync(ct);
+
         if (_options.Mode == BotMode.Webhook)
         {
             if (string.IsNullOrWhiteSpace(_options.Webhook.Url))
@@ -184,7 +188,7 @@ public sealed class TelegramBotService : BackgroundService
         {
             var chatId = message.Chat.Id.ToString();
             var command = message.Text?.Trim().ToLower();
-            if (command == "/link")
+            if (command == "/link" || command == "link" || command == "\\link")
             {
                 var userId = message.From?.Id.ToString();
                 var chatTitle = message.Chat.Title;

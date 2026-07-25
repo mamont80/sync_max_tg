@@ -29,6 +29,7 @@ public sealed class MaxApiClient : IMessengerApiClient
     private readonly IHttpClientFactory _httpFactory;
     private readonly MaxOptions _options;
     private readonly MediaOptions _media;
+    private readonly MiniAppOptions _miniApp;
     private readonly MediaConverter _converter;
     private readonly ILogger<MaxApiClient> _logger;
 
@@ -37,6 +38,7 @@ public sealed class MaxApiClient : IMessengerApiClient
         IHttpClientFactory httpFactory,
         IOptions<MaxOptions> options,
         IOptions<MediaOptions> media,
+        IOptions<MiniAppOptions> miniApp,
         MediaConverter converter,
         ILogger<MaxApiClient> logger)
     {
@@ -44,6 +46,7 @@ public sealed class MaxApiClient : IMessengerApiClient
         _httpFactory = httpFactory;
         _options = options.Value;
         _media = media.Value;
+        _miniApp = miniApp.Value;
         _converter = converter;
         _logger = logger;
 
@@ -101,6 +104,57 @@ public sealed class MaxApiClient : IMessengerApiClient
         var url = $"{BaseUrl}/messages?user_id={userId}";
         using var response = await _http.PostAsJsonAsync(url, new MaxSendMessageRequest { Text = text }, ct);
         response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Сообщение с inline-кнопкой, открывающей мини-приложение (<c>open_app</c>).
+    /// Формат этой кнопки не задокументирован публично (см. <see cref="MaxButton"/>),
+    /// поэтому отказ сервера здесь ожидаем: в этом случае сообщение переотправляется
+    /// без кнопки — текст до пользователя дойдёт в любом случае. Основной путь открытия
+    /// приложения в MAX — кнопка, появляющаяся в чате сама после привязки URL в кабинете.
+    /// </summary>
+    public async Task SendMiniAppButtonAsync(string userId, string text, string buttonText, CancellationToken ct)
+    {
+        var url = $"{BaseUrl}/messages?user_id={userId}";
+        var miniAppUrl = _miniApp.Url;
+
+        if (!string.IsNullOrWhiteSpace(miniAppUrl))
+        {
+            var request = new MaxSendMessageRequest
+            {
+                Text = text,
+                Attachments =
+                [
+                    new MaxAttachmentRequest
+                    {
+                        Type = "inline_keyboard",
+                        Payload = new MaxAttachmentRequestPayload
+                        {
+                            Buttons =
+                            [
+                                [new MaxButton
+                                {
+                                    Type = "open_app",
+                                    Text = buttonText,
+                                    WebApp = new MaxWebAppInfo { Url = miniAppUrl }
+                                }]
+                            ]
+                        }
+                    }
+                ]
+            };
+
+            using var response = await _http.PostAsJsonAsync(url, request, ct);
+            if (response.IsSuccessStatusCode)
+                return;
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogWarning(
+                "[MAX] Кнопка мини-приложения не принята ({Status}), отправляю сообщение без неё. Ответ: {Body}",
+                (int)response.StatusCode, body);
+        }
+
+        await SendTextAsync(userId, text, ct);
     }
 
     /// <summary>
@@ -203,6 +257,11 @@ public sealed class MaxApiClient : IMessengerApiClient
         using var response = await _http.PostAsync(url, content: null, ct);
         response.EnsureSuccessStatusCode();
         var raw = await response.Content.ReadAsStringAsync(ct);
+
+        // Ответ /uploads — единственный источник токена для video/audio, поэтому пишем его
+        // в лог: без этого разбирать проблемы с вложениями приходится по стеку исключения.
+        _logger.LogInformation("[MAX] /uploads?type={Type}: {Raw}", type, Shorten(raw));
+
         return string.IsNullOrWhiteSpace(raw) ? null : JsonSerializer.Deserialize<MaxUploadEndpoint>(raw);
     }
 
@@ -222,7 +281,36 @@ public sealed class MaxApiClient : IMessengerApiClient
         using var response = await media.PostAsync(uploadUrl, form, ct);
         response.EnsureSuccessStatusCode();
         var raw = await response.Content.ReadAsStringAsync(ct);
-        return string.IsNullOrWhiteSpace(raw) ? new MaxUploadResult() : JsonSerializer.Deserialize<MaxUploadResult>(raw);
+
+        if (string.IsNullOrWhiteSpace(raw))
+            return new MaxUploadResult();
+
+        try
+        {
+            return JsonSerializer.Deserialize<MaxUploadResult>(raw);
+        }
+        catch (JsonException)
+        {
+            // Загрузка прошла (статус успешный), но тело ответа — не JSON: CDN MAX на
+            // видео отдаёт HTML-страницу. Для video/audio это не беда — токен вложения
+            // уже получен из /uploads, и тело ответа не нужно вовсе. Раньше исключение
+            // отсюда откатывало отправку на обычный файл, и видео приходило документом.
+            //
+            // Пустой результат тут не «проглатывание ошибки»: если токена нет и в
+            // /uploads, вызывающий UploadAsync всё равно выбросит исключение — просто
+            // уже по существу, а не из-за формата ответа.
+            _logger.LogWarning("[MAX] Ответ загрузки не JSON (статус {Status}), продолжаем по токену из /uploads: {Raw}",
+                (int)response.StatusCode, Shorten(raw));
+            return new MaxUploadResult();
+        }
+    }
+
+    /// <summary>Обрезает тело ответа для лога: HTML-страница целиком в журнале не нужна.</summary>
+    private static string Shorten(string raw)
+    {
+        const int limit = 300;
+        var text = raw.ReplaceLineEndings(" ").Trim();
+        return text.Length <= limit ? text : text[..limit] + "…";
     }
 
     /// <summary>

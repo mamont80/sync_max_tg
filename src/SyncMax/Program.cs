@@ -15,6 +15,8 @@ using SyncMax.Messengers;
 using SyncMax.Messengers.Max;
 using SyncMax.Messengers.Telegram;
 using SyncMax.Services;
+using SyncMax.Services.Moderation;
+using SyncMax.WebApp;
 using System.Text;
 using System.Text.Json;
 using Telegram.Bot;
@@ -37,6 +39,12 @@ try
     // ListenUrl — наружу не открываемся, слушаем случайный порт на loopback.
     builder.WebHost.UseUrls(string.IsNullOrWhiteSpace(httpServer.ListenUrl) ? "http://127.0.0.1:0" : httpServer.ListenUrl);
 
+    // Манифест статики (wwwroot мини-приложения) хост подключает сам только в окружении
+    // Development. В опубликованном виде wwwroot лежит рядом с бинарником и берётся оттуда,
+    // а вот при запуске неопубликованной сборки в любом другом окружении файлов бы не нашлось
+    // и /app отдавал бы 404. Вызов ниже включает манифест всегда, когда он есть.
+    builder.WebHost.UseStaticWebAssets();
+
     // --- Логирование: консоль (по умолчанию от хоста) + дублирование в файл (logs/syncmax-*.log). ---
     builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(AppContext.BaseDirectory, "logs")));
 
@@ -46,6 +54,8 @@ try
     builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(DatabaseOptions.Section));
     builder.Services.Configure<LinkingOptions>(builder.Configuration.GetSection(LinkingOptions.Section));
     builder.Services.Configure<MediaOptions>(builder.Configuration.GetSection(MediaOptions.Section));
+    builder.Services.Configure<MiniAppOptions>(builder.Configuration.GetSection(MiniAppOptions.Section));
+    builder.Services.Configure<CleanupOptions>(builder.Configuration.GetSection(CleanupOptions.Section));
 
     // --- Данные ---
     builder.Services.AddSingleton<SqliteConnectionFactory>();
@@ -58,6 +68,8 @@ try
     builder.Services.AddSingleton<IMigration, M002_AddLinkedToUser>();
     builder.Services.AddSingleton<IMigration, M003_ChatLinks>();
     builder.Services.AddSingleton<IMigration, M004_MessageLinks>();
+    builder.Services.AddSingleton<IMigration, M005_ChatLinkTitles>();
+    builder.Services.AddSingleton<IMigration, M006_MessageLinksCreatedAtIndex>();
     builder.Services.AddSingleton<MigrationRunner>();
 
     // --- Сервисы ---
@@ -67,6 +79,13 @@ try
     builder.Services.AddSingleton<SystemCommandService>();
     builder.Services.AddSingleton<MessageRelayService>();
     builder.Services.AddSingleton<MediaConverter>();
+
+    // Модерация: через неё проходит всё, что уходит в связанный чат.
+    builder.Services.AddSingleton<ModerationService>();
+
+    // --- Мини-приложение: проверка данных запуска + логика экранов ---
+    builder.Services.AddSingleton<MiniAppAuth>();
+    builder.Services.AddSingleton<MiniAppService>();
 
     // --- Клиенты API мессенджеров: общий контракт IMessengerApiClient (отправка) ---
     builder.Services.AddSingleton<TelegramApiClient>();
@@ -100,11 +119,22 @@ try
     builder.Services.AddSingleton<MaxBotService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<MaxBotService>());
 
+    // --- Фоновая уборка БД: удаление устаревших записей message_links партиями ---
+    builder.Services.AddHostedService<MessageLinkCleanupService>();
+
     var app = builder.Build();
+
+    // Статика мини-приложения (wwwroot/app) — раздаётся всегда, даже если MiniApp:Url не
+    // задан: без этого нельзя было бы открыть приложение локально для отладки.
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
 
     // Проверка доступности сервера снаружи (в т.ч. что reverse proxy/порт настроены верно):
     // отвечает всегда, независимо от режимов ботов.
     app.MapGet("/test", () => Results.Text("ok"));
+
+    // API мини-приложения: /api/miniapp/*
+    MiniAppEndpoints.Map(app);
 
     var webhookLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Webhook");
 

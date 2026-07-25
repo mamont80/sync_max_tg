@@ -27,8 +27,18 @@ public sealed class ChatLink
 
     public bool Active { get; set; } = true;
 
-    /// <summary>"{название чата первой стороны} <=> {название чата второй стороны}".</summary>
+    /// <summary>
+    /// "{название чата первой стороны} &lt;=&gt; {название чата второй стороны}". Порядок
+    /// зависит от того, кто из двоих сделал репост первым, поэтому определить по нему
+    /// сторону нельзя — для этого есть <see cref="MaxChatTitle"/>/<see cref="TgChatTitle"/>.
+    /// </summary>
     public string Title { get; set; } = string.Empty;
+
+    /// <summary>Название чата на стороне MAX. null у связок, созданных до миграции M005.</summary>
+    public string? MaxChatTitle { get; set; }
+
+    /// <summary>Название чата на стороне Telegram. null у связок, созданных до миграции M005.</summary>
+    public string? TgChatTitle { get; set; }
 
     /// <summary>Направление пересылки, см. <see cref="RepostDirection"/>.</summary>
     public string RepostType { get; set; } = string.Empty;

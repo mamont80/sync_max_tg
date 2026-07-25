@@ -22,6 +22,14 @@ public interface IMessengerApiClient
     Task SendTextAsync(string userId, string text, CancellationToken ct);
 
     /// <summary>
+    /// Отправка сообщения с кнопкой, открывающей мини-приложение. Кнопка у каждой платформы
+    /// своя (Telegram — inline-кнопка web_app, MAX — inline_keyboard с кнопкой open_app),
+    /// поэтому различия остаются внутри клиента, а вызывающему видна одна операция.
+    /// Если адрес мини-приложения не задан (<c>MiniApp:Url</c>), отправляется обычный текст.
+    /// </summary>
+    Task SendMiniAppButtonAsync(string userId, string text, string buttonText, CancellationToken ct);
+
+    /// <summary>
     /// Отправка сообщения (текст и/или медиа-вложения) в групповой чат/канал по его id —
     /// для пересылки между связанными чатами. Каждый клиент кодирует содержимое по-своему
     /// (Telegram — entities + родные Send*, MAX — markdown + upload-flow вложений), исходя

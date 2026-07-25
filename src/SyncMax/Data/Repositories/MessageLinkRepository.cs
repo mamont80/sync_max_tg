@@ -5,9 +5,11 @@ namespace SyncMax.Data.Repositories;
 
 /// <summary>
 /// Карта соответствия «сообщение-оригинал ↔ пересланная копия» (см. миграцию M004).
-/// Одна запись на каждую пересылку, заполнены обе стороны (MAX и Telegram). Поскольку
-/// пересылка двусторонняя, запрос по колонкам исходной платформы всегда находит id копии
-/// в целевой — то есть карта работает в обе стороны одной таблицей.
+/// Одна запись на каждую пересылку, заполнены обе стороны (MAX и Telegram), поэтому запрос
+/// по колонкам исходной платформы всегда находит id копии в целевой — карта работает в обе
+/// стороны одной таблицей независимо от того, куда именно разрешено пересылать.
+/// Записи здесь ничего не разрешают сами по себе: право на перенос правки/удаления решает
+/// связка в <see cref="ChatLinkRepository"/> (активность + направление).
 /// </summary>
 public sealed class MessageLinkRepository
 {
@@ -61,6 +63,55 @@ public sealed class MessageLinkRepository
             ? "DELETE FROM message_links WHERE max_chat_id = @chatId AND max_msg_id = @msgId;"
             : "DELETE FROM message_links WHERE tg_chat_id = @chatId AND tg_msg_id = @msgId;";
         await conn.ExecuteAsync(new CommandDefinition(sql, new { chatId, msgId }, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// Удаляет всю карту пары чатов — вызывается при удалении связки. Без этого записи
+    /// от несуществующей связки копились бы в таблице навсегда: сами по себе прав на
+    /// перенос они не дают, но и смысла в них больше нет.
+    /// </summary>
+    public async Task DeleteByChatPairAsync(string maxChatId, string tgChatId, CancellationToken ct)
+    {
+        await using var conn = await _factory.CreateOpenAsync(ct);
+        const string sql = "DELETE FROM message_links WHERE max_chat_id = @maxChatId AND tg_chat_id = @tgChatId;";
+        await conn.ExecuteAsync(new CommandDefinition(sql, new { maxChatId, tgChatId }, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// Удаляет не более <paramref name="batchSize"/> записей старше <paramref name="olderThan"/>
+    /// и возвращает, сколько удалено. Ограничение размера — главное здесь: одиночный
+    /// <c>DELETE</c> по всем просроченным записям держал бы блокировку записи на всю таблицу,
+    /// а пересылка сообщений в это время пишет в неё же. Отбор идёт подзапросом с
+    /// <c>LIMIT</c>, потому что в SQLite у самого <c>DELETE</c> ограничения по количеству
+    /// нет (если только сборка не собрана с SQLITE_ENABLE_UPDATE_DELETE_LIMIT).
+    ///
+    /// Сравнение дат строковое: <c>created_at</c> у всех записей пишется одним форматом
+    /// (<c>DateTimeOffset.ToString("o")</c> в UTC), а он лексикографически упорядочен.
+    ///
+    /// Сортировка именно по <c>created_at</c>, а не по <c>id</c>: по нему есть индекс
+    /// (<c>M006</c>), и подзапрос обслуживается покрывающим поиском по нему. С <c>ORDER BY id</c>
+    /// планировщик SQLite вместо этого сканирует таблицу по rowid — пока просроченные записи
+    /// есть, это незаметно (они в начале таблицы), но каждый холостой проход перебирал бы
+    /// таблицу целиком, ничего не найдя.
+    /// </summary>
+    public async Task<int> DeleteOlderThanAsync(DateTimeOffset olderThan, int batchSize, CancellationToken ct)
+    {
+        await using var conn = await _factory.CreateOpenAsync(ct);
+        const string sql =
+            """
+            DELETE FROM message_links
+            WHERE id IN (
+                SELECT id FROM message_links
+                WHERE created_at < @cutoff
+                ORDER BY created_at
+                LIMIT @batchSize
+            );
+            """;
+        return await conn.ExecuteAsync(new CommandDefinition(sql, new
+        {
+            cutoff = olderThan.ToUniversalTime().ToString("o"),
+            batchSize
+        }, cancellationToken: ct));
     }
 
     private sealed class CounterpartRow

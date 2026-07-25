@@ -90,6 +90,35 @@ public sealed class LinkingService
         await SendCodeAsync(messenger, userId, user, lang, ct);
     }
 
+    /// <summary>
+    /// Выпускает новый код связки и возвращает его, ничего не отправляя в чат — для
+    /// мини-приложения, которое показывает код прямо в интерфейсе, и дублирующее
+    /// сообщение от бота было бы шумом. Возвращает null, если аккаунт уже связан.
+    /// </summary>
+    public async Task<string?> IssueLinkCodeAsync(MessengerType messenger, string userId, CancellationToken ct)
+    {
+        var user = await _users.GetAsync(messenger, userId, ct);
+        if (user?.LinkedToUser is not null)
+            return null;
+
+        return await GenerateAndSaveCodeAsync(messenger, userId, ct);
+    }
+
+    /// <summary>
+    /// Сбрасывает связку аккаунта со вторым мессенджером, сообщает об этом пользователю
+    /// и сразу присылает новое приглашение связаться (как после /start). Вызывается и
+    /// системной командой /clear, и мини-приложением — поведение для обоих должно быть
+    /// одинаковым, поэтому логика живёт здесь, а не в вызывающих.
+    /// </summary>
+    public async Task ResetAndNotifyAsync(MessengerType messenger, string userId, CancellationToken ct)
+    {
+        var lang = (await _users.GetAsync(messenger, userId, ct))?.Language ?? Localization.Fallback;
+
+        await _users.ClearLinkAsync(messenger, userId, ct);
+        await SendAsync(messenger, userId, Localization.Get(lang, "settings_reset"), ct);
+        await SendWelcomeInviteAsync(messenger, userId, ct);
+    }
+
     private async Task SendCodeAsync(MessengerType messenger, string userId, User? user, string lang, CancellationToken ct)
     {
         if (user?.LinkedToUser is not null)
@@ -98,13 +127,16 @@ public sealed class LinkingService
             return;
         }
 
+        var code = await GenerateAndSaveCodeAsync(messenger, userId, ct);
+        await SendAsync(messenger, userId, Localization.Format(lang, "welcome", code), ct);
+    }
+
+    private async Task<string> GenerateAndSaveCodeAsync(MessengerType messenger, string userId, CancellationToken ct)
+    {
         var code = _codes.Generate();
         await _users.SetLinkCodeAsync(messenger, userId, code, DateTimeOffset.UtcNow, ct);
-
-        var welcome = Localization.Format(lang, "welcome", code);
-        await SendAsync(messenger, userId, welcome, ct);
-
         _logger.LogInformation("Выдан код связки пользователю {Messenger}:{UserId}.", messenger, userId);
+        return code;
     }
 
     private async Task TryLinkAsync(

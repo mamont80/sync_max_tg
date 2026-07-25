@@ -70,9 +70,11 @@ public sealed class ChatLinkingService
         var maxChatId = messenger == MessengerType.Max ? chatId : counterpartChatId;
         var maxChatKind = messenger == MessengerType.Max ? chatKind : counterpartChatKind;
         var maxUserId = messenger == MessengerType.Max ? userId : counterpartUserId;
+        var maxChatTitle = messenger == MessengerType.Max ? title : counterpartTitle;
         var tgChatId = messenger == MessengerType.Telegram ? chatId : counterpartChatId;
         var tgChatKind = messenger == MessengerType.Telegram ? chatKind : counterpartChatKind;
         var tgUserId = messenger == MessengerType.Telegram ? userId : counterpartUserId;
+        var tgChatTitle = messenger == MessengerType.Telegram ? title : counterpartTitle;
 
         if (await _chatLinks.ExistsAsync(maxChatId, tgChatId, ct))
         {
@@ -90,6 +92,8 @@ public sealed class ChatLinkingService
                 TgChatType = tgChatKind.ToCode(),
                 TgUserId = tgUserId,
                 Title = $"{counterpartTitle} <=> {title}",
+                MaxChatTitle = maxChatTitle,
+                TgChatTitle = tgChatTitle,
                 RepostType = RepostDirection.Both.ToCode(),
                 CreatedAt = DateTimeOffset.UtcNow.ToString("o")
             };

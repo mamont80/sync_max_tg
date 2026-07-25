@@ -179,7 +179,7 @@ public sealed class MaxBotService : BackgroundService
         {
             var chatId2str = chatId2.ToString();
             var command = message.Body?.Text?.Trim().ToLower();
-            if (command == "/link")
+            if (command == "/link" || command == "link" || command == "\\link")
             {
                 var chatKind = recipient.ChatType == ChatKindExtensions.ChannelCode ? ChatKind.Channel : ChatKind.Chat;
                 var chat = await _client.GetChatOrNullAsync(chatId2, ct);

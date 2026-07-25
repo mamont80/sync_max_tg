@@ -1,0 +1,742 @@
+/*
+  Оформление мини-приложения. Ни одного жёстко заданного «фирменного» цвета в разметке:
+  всё рисуется по переменным ниже, а их значениями platform.js подменяет палитру
+  мессенджера (themeParams). Значения здесь — только запасные, на случай если платформа
+  палитру не отдала: тогда берётся системная светлая/тёмная тема.
+*/
+:root {
+    --sm-bg: #ffffff;
+    --sm-secondary-bg: #f1f2f6;
+    --sm-card: #ffffff;
+    --sm-text: #0d0d12;
+    --sm-hint: #8b8d98;
+    --sm-accent: #2f8ee0;
+    --sm-accent-text: #ffffff;
+    --sm-separator: rgba(60, 60, 67, 0.16);
+    --sm-danger: #e0384e;
+
+    --sm-radius: 16px;
+    --sm-radius-sm: 10px;
+    --sm-gap: 12px;
+    --sm-pad: 16px;
+    /* Минимальная цель нажатия: меньше 44px на сенсорном экране промахиваются. */
+    --sm-tap: 44px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --sm-bg: #17181c;
+        --sm-secondary-bg: #0f1013;
+        --sm-card: #212227;
+        --sm-text: #f4f4f6;
+        --sm-hint: #8f909a;
+        --sm-accent: #5aabf0;
+        --sm-accent-text: #ffffff;
+        --sm-separator: rgba(255, 255, 255, 0.12);
+        --sm-danger: #ff5f6d;
+    }
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    height: 100%;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100dvh;
+    background: var(--sm-secondary-bg);
+    color: var(--sm-text);
+    /* Системный шрифт, а не веб-шрифт: приложение открывается без сетевых запросов
+       и выглядит родным на каждой платформе. */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    font-size: 16px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+}
+
+h1, h2, h3, p, ul {
+    margin: 0;
+}
+
+button {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+
+/* ---------- Шапка ---------- */
+
+/*
+  Приложение открывают и на телефоне, и в десктопном клиенте, где окно бывает широким.
+  Ограничение по ширине с центрированием — чтобы на большом экране строки не растягивались
+  на всю ширину и колонка оставалась читаемой.
+*/
+.topbar,
+.screen,
+.tabbar__inner,
+.sheet__panel {
+    width: 100%;
+    max-width: 560px;
+    margin-inline: auto;
+}
+
+.topbar {
+    padding: 18px var(--sm-pad) 10px;
+    padding-top: calc(18px + env(safe-area-inset-top));
+}
+
+.topbar__title {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.topbar__subtitle {
+    margin-top: 2px;
+    color: var(--sm-hint);
+    font-size: 14px;
+}
+
+.topbar__subtitle:empty {
+    display: none;
+}
+
+/* ---------- Экран ---------- */
+
+.screen {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px var(--sm-pad) calc(var(--sm-pad) + 8px);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sm-gap);
+}
+
+/* ---------- Карточки ---------- */
+
+.card {
+    background: var(--sm-card);
+    border-radius: var(--sm-radius);
+    padding: 14px 16px;
+}
+
+.card--tap {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    transition: transform 0.12s ease, opacity 0.12s ease;
+}
+
+.card--tap:active {
+    transform: scale(0.985);
+    opacity: 0.85;
+}
+
+.card__title {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    word-break: break-word;
+}
+
+.card__note {
+    color: var(--sm-hint);
+    font-size: 14px;
+}
+
+/* Кнопка внутри карточки: отделяем от текста, чтобы не липла к нему. */
+.card__actions {
+    margin-top: 12px;
+}
+
+/* Кнопка на фоне карточки должна отличаться от неё, иначе сливается. */
+.card .btn--secondary,
+.card .btn--danger {
+    background: var(--sm-secondary-bg);
+}
+
+/* Строка одной стороны связки: значок платформы + название чата. */
+.side {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--sm-text);
+    min-width: 0;
+}
+
+.side + .side {
+    margin-top: 7px;
+}
+
+.card__title + .side {
+    margin-top: 10px;
+}
+
+.side__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.badge {
+    flex: none;
+    padding: 2px 7px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    background: var(--sm-secondary-bg);
+    color: var(--sm-text);
+}
+
+.badge--max {
+    background: color-mix(in srgb, var(--sm-accent) 16%, transparent);
+    color: var(--sm-accent);
+}
+
+.badge--tg {
+    background: color-mix(in srgb, var(--sm-accent) 16%, transparent);
+    color: var(--sm-accent);
+}
+
+/* ---------- Статус связки ---------- */
+
+.status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--sm-separator);
+    font-size: 13px;
+    color: var(--sm-hint);
+}
+
+.dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--sm-hint);
+    flex: none;
+}
+
+.dot--on {
+    background: #34c759;
+}
+
+.dot--off {
+    background: var(--sm-hint);
+    opacity: 0.6;
+}
+
+.chip {
+    margin-left: auto;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--sm-secondary-bg);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* ---------- Кнопки ---------- */
+
+.btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    min-height: var(--sm-tap);
+    padding: 0 16px;
+    border: none;
+    border-radius: var(--sm-radius-sm);
+    background: var(--sm-accent);
+    color: var(--sm-accent-text);
+    font-size: 16px;
+    font-weight: 600;
+    transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.btn:active {
+    transform: scale(0.99);
+    opacity: 0.85;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+    transform: none;
+}
+
+.btn--secondary {
+    background: var(--sm-card);
+    color: var(--sm-accent);
+}
+
+.btn--danger {
+    background: transparent;
+    color: var(--sm-danger);
+}
+
+.btn--quiet {
+    background: transparent;
+    color: var(--sm-hint);
+    font-weight: 500;
+    font-size: 15px;
+}
+
+/* ---------- Код связки ---------- */
+
+.code {
+    display: block;
+    margin: 14px 0 6px;
+    padding: 14px 0;
+    border-radius: var(--sm-radius-sm);
+    background: var(--sm-secondary-bg);
+    text-align: center;
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    /* Моноширинный — цифры кода не должны «плясать» по ширине. */
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    text-indent: 0.22em;
+}
+
+/* ---------- Переключатель (active) ---------- */
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: var(--sm-tap);
+}
+
+.row__text {
+    flex: 1;
+    min-width: 0;
+}
+
+.row__label {
+    font-size: 16px;
+    font-weight: 500;
+}
+
+.row__hint {
+    font-size: 13px;
+    color: var(--sm-hint);
+}
+
+.switch {
+    flex: none;
+    position: relative;
+    width: 51px;
+    height: 31px;
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    background: var(--sm-separator);
+    transition: background 0.2s ease;
+}
+
+.switch[aria-checked="true"] {
+    background: #34c759;
+}
+
+.switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 27px;
+    height: 27px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    transition: transform 0.2s ease;
+}
+
+.switch[aria-checked="true"]::after {
+    transform: translateX(20px);
+}
+
+/* ---------- Сегментированный выбор направления ---------- */
+
+.segmented {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    margin-top: 10px;
+    padding: 4px;
+    border-radius: 12px;
+    background: var(--sm-secondary-bg);
+}
+
+.segmented__item {
+    min-height: 38px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--sm-text);
+    font-size: 14px;
+    font-weight: 600;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.segmented__item[aria-pressed="true"] {
+    background: var(--sm-card);
+    color: var(--sm-accent);
+}
+
+/* ---------- Пустые состояния, ошибки, загрузка ---------- */
+
+.empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 44px 24px;
+    text-align: center;
+}
+
+.empty__icon {
+    width: 56px;
+    height: 56px;
+    color: var(--sm-hint);
+    opacity: 0.55;
+}
+
+.empty__title {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.empty__text {
+    color: var(--sm-hint);
+    font-size: 15px;
+    max-width: 30ch;
+}
+
+/* Скелетон — вместо пустоты, пока идёт первый запрос. */
+.skeleton {
+    height: 96px;
+    border-radius: var(--sm-radius);
+    background: var(--sm-card);
+    opacity: 0.65;
+    animation: sm-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes sm-pulse {
+    50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .skeleton { animation: none; }
+    * { transition: none !important; }
+}
+
+/* ---------- Список шагов инструкции ---------- */
+
+.steps {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.step {
+    display: flex;
+    gap: 12px;
+}
+
+.step__num {
+    flex: none;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--sm-accent);
+    color: var(--sm-accent-text);
+    font-size: 14px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.step__text {
+    font-size: 15px;
+    padding-top: 2px;
+}
+
+.step__text b {
+    font-weight: 600;
+}
+
+/* ---------- Нижнее меню ---------- */
+
+.tabbar {
+    background: var(--sm-bg);
+    border-top: 1px solid var(--sm-separator);
+    /* Отступ под системную полосу жестов, иначе вкладки под ней. */
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+.tabbar__inner {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+}
+
+.tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 54px;
+    padding: 7px 2px;
+    border: none;
+    background: none;
+    color: var(--sm-hint);
+    transition: color 0.15s ease;
+}
+
+.tab[aria-current="page"] {
+    color: var(--sm-accent);
+}
+
+.tab:active {
+    opacity: 0.6;
+}
+
+.tab__icon {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.tab__label {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+}
+
+/* ---------- Лист (bottom sheet) ---------- */
+
+.sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+}
+
+/* display:flex выше перебил бы скрытие по атрибуту hidden. */
+.sheet[hidden] {
+    display: none;
+}
+
+.sheet__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    animation: sm-fade 0.2s ease;
+}
+
+.sheet__panel {
+    position: relative;
+    max-height: 88dvh;
+    overflow-y: auto;
+    padding: 8px var(--sm-pad) calc(var(--sm-pad) + env(safe-area-inset-bottom));
+    background: var(--sm-secondary-bg);
+    border-radius: 20px 20px 0 0;
+    animation: sm-rise 0.24s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.sheet__grabber {
+    width: 36px;
+    height: 4px;
+    margin: 0 auto 12px;
+    border-radius: 2px;
+    background: var(--sm-separator);
+}
+
+.sheet__title {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 14px;
+    word-break: break-word;
+}
+
+.sheet__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sm-gap);
+}
+
+@keyframes sm-fade {
+    from { opacity: 0; }
+}
+
+@keyframes sm-rise {
+    from { transform: translateY(100%); }
+}
+
+/* ---------- Диалог подтверждения ---------- */
+
+.dialog {
+    position: fixed;
+    inset: 0;
+    /* Выше листа: диалог может открыться поверх карточки связки. */
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.dialog[hidden] {
+    display: none;
+}
+
+.dialog__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    animation: sm-fade 0.16s ease;
+}
+
+.dialog__panel {
+    position: relative;
+    width: 100%;
+    max-width: 320px;
+    max-height: calc(100dvh - 48px);
+    overflow-y: auto;
+    padding: 20px 20px 14px;
+    border-radius: 18px;
+    background: var(--sm-card);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+    text-align: center;
+    animation: sm-pop 0.18s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.dialog__title {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    word-break: break-word;
+}
+
+.dialog__text {
+    margin-top: 7px;
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--sm-hint);
+    word-break: break-word;
+}
+
+.dialog__actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 18px;
+}
+
+.dialog__actions--column {
+    flex-direction: column;
+}
+
+.dialog__action {
+    flex: 1;
+    min-height: var(--sm-tap);
+    padding: 0 12px;
+    border: none;
+    border-radius: var(--sm-radius-sm);
+    background: var(--sm-secondary-bg);
+    color: var(--sm-text);
+    font-size: 16px;
+    font-weight: 600;
+    transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.dialog__action:active {
+    transform: scale(0.98);
+    opacity: 0.85;
+}
+
+.dialog__action:focus-visible {
+    outline: 2px solid var(--sm-accent);
+    outline-offset: 2px;
+}
+
+.dialog__action--primary {
+    background: var(--sm-accent);
+    color: var(--sm-accent-text);
+}
+
+/*
+  Разрушающее действие — красным ТЕКСТОМ на нейтральной заливке, а не белым по красному.
+  Платформа отдаёт destructive_text_color именно как цвет текста: в тёмной теме он светлый,
+  и белые буквы на нём почти не читались бы. Так же устроены системные диалоги обоих
+  клиентов — обе кнопки одинакового веса, различаются цветом.
+*/
+.dialog__action--danger {
+    background: var(--sm-secondary-bg);
+    color: var(--sm-danger);
+}
+
+.dialog__action--quiet {
+    background: var(--sm-secondary-bg);
+    color: var(--sm-text);
+    font-weight: 500;
+}
+
+@keyframes sm-pop {
+    from { transform: scale(0.94); opacity: 0; }
+}
+
+/* ---------- Всплывающая подсказка ---------- */
+
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(84px + env(safe-area-inset-bottom));
+    z-index: 30;
+    max-width: min(90vw, 420px);
+    padding: 11px 18px;
+    border-radius: 999px;
+    /* Инверсия темы: на тёмном фоне пилюля светлая, на светлом — тёмная. Так она
+       заметна в обеих темах, а не сливается с фоном экрана. */
+    background: var(--sm-text);
+    color: var(--sm-bg);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+    font-size: 14px;
+    font-weight: 500;
+    text-align: center;
+    /* Подсказка ничего не перехватывает: под ней остаётся рабочий интерфейс. */
+    pointer-events: none;
+    opacity: 0;
+    transform: translate(-50%, 8px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.toast--visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}

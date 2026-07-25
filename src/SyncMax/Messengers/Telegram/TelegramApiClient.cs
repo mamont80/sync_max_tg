@@ -5,6 +5,7 @@ using SyncMax.Models;
 using SyncMax.Services;
 using Telegram.Bot;
 using Telegram.Bot.Types;
+using Telegram.Bot.Types.ReplyMarkups;
 using TelegramUser = Telegram.Bot.Types.User;
 
 namespace SyncMax.Messengers.Telegram;
@@ -18,12 +19,17 @@ namespace SyncMax.Messengers.Telegram;
 public sealed class TelegramApiClient : IMessengerApiClient
 {
     private readonly TelegramOptions _options;
+    private readonly MiniAppOptions _miniApp;
     private readonly ILogger<TelegramApiClient> _logger;
     private readonly Lazy<ITelegramBotClient?> _bot;
 
-    public TelegramApiClient(IOptions<TelegramOptions> options, ILogger<TelegramApiClient> logger)
+    public TelegramApiClient(
+        IOptions<TelegramOptions> options,
+        IOptions<MiniAppOptions> miniApp,
+        ILogger<TelegramApiClient> logger)
     {
         _options = options.Value;
+        _miniApp = miniApp.Value;
         _logger = logger;
         _bot = new Lazy<ITelegramBotClient?>(() => IsConfigured ? CreateBot() : null);
     }
@@ -53,6 +59,60 @@ public sealed class TelegramApiClient : IMessengerApiClient
         }
 
         await bot.SendMessage(long.Parse(userId), text, cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// Сообщение с inline-кнопкой, открывающей мини-приложение. Telegram требует для
+    /// web_app-кнопки https-адрес, поэтому при пустом или не-https <c>MiniApp:Url</c>
+    /// кнопка не добавляется — уходит просто текст.
+    /// </summary>
+    public async Task SendMiniAppButtonAsync(string userId, string text, string buttonText, CancellationToken ct)
+    {
+        if (BotClient is not { } bot)
+        {
+            _logger.LogWarning("Telegram: клиент не инициализирован, сообщение не отправлено.");
+            return;
+        }
+
+        var chatId = long.Parse(userId);
+        var url = _miniApp.Url;
+
+        if (string.IsNullOrWhiteSpace(url) || !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            await bot.SendMessage(chatId, text, cancellationToken: ct);
+            return;
+        }
+
+        var markup = new InlineKeyboardMarkup(InlineKeyboardButton.WithWebApp(buttonText, new WebAppInfo { Url = url }));
+        await bot.SendMessage(chatId, text, replyMarkup: markup, cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// Выставляет постоянную кнопку мини-приложения рядом с полем ввода (у всех личных
+    /// чатов сразу). Вызывается один раз при старте бота: настройка живёт на стороне
+    /// Telegram, а не в каждом сообщении.
+    /// </summary>
+    public async Task ConfigureMenuButtonAsync(CancellationToken ct)
+    {
+        if (BotClient is not { } bot)
+            return;
+
+        var url = _miniApp.Url;
+        if (string.IsNullOrWhiteSpace(url) || !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        try
+        {
+            await bot.SetChatMenuButton(
+                menuButton: new MenuButtonWebApp { Text = "Открыть", WebApp = new WebAppInfo { Url = url } },
+                cancellationToken: ct);
+            _logger.LogInformation("Telegram: кнопка меню настроена на мини-приложение {Url}.", url);
+        }
+        catch (Exception ex)
+        {
+            // Не критично: приложение можно открыть и inline-кнопкой из сообщения.
+            _logger.LogWarning(ex, "Telegram: не удалось выставить кнопку меню мини-приложения.");
+        }
     }
 
     /// <summary>

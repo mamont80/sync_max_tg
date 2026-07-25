@@ -99,6 +99,73 @@ public sealed class LinkingOptions
     public string DefaultLanguage { get; set; } = "ru";
 }
 
+/// <summary>
+/// Параметры фоновой уборки БД (<see cref="Services.MessageLinkCleanupService"/>).
+/// Значения по умолчанию рассчитаны так, чтобы удаление шло тонкой струйкой и не мешало
+/// пересылке сообщений, которая пишет в ту же таблицу.
+/// </summary>
+public sealed class CleanupOptions
+{
+    public const string Section = "Cleanup";
+
+    /// <summary>
+    /// Сколько суток хранить карту «оригинал ↔ копия» (<c>message_links</c>). Записи нужны,
+    /// пока на сообщение могут ответить, отредактировать или удалить его; дальше они только
+    /// занимают место. 0 и меньше — уборка отключена.
+    /// </summary>
+    public int MessageLinkRetentionDays { get; set; } = 14;
+
+    /// <summary>Сколько записей удалять за одну транзакцию.</summary>
+    public int BatchSize { get; set; } = 200;
+
+    /// <summary>Пауза между партиями, пока есть что удалять.</summary>
+    public int BatchPauseSeconds { get; set; } = 5;
+
+    /// <summary>Пауза после того, как всё просроченное вычищено, — до следующей проверки.</summary>
+    public int IdlePauseMinutes { get; set; } = 60;
+
+    /// <summary>
+    /// Задержка перед первым проходом после старта: даём приложению поднять ботов и
+    /// применить миграции, не соревнуясь с ними за базу.
+    /// </summary>
+    public int StartupDelaySeconds { get; set; } = 60;
+}
+
+/// <summary>
+/// Параметры мини-приложения (веб-интерфейс, открываемый из чата с ботом). Адрес один
+/// на оба мессенджера: платформа определяется на фронте по доступному мосту, а на бэке —
+/// по префиксу в заголовке Authorization (см. <c>WebApp/MiniAppAuth</c>).
+/// </summary>
+public sealed class MiniAppOptions
+{
+    public const string Section = "MiniApp";
+
+    /// <summary>
+    /// Публичный https-адрес мини-приложения, напр. https://ваш-домен/app. Пусто —
+    /// кнопка запуска в ботах не выставляется (само приложение при этом всё равно
+    /// раздаётся, что удобно при локальной отладке).
+    /// </summary>
+    public string Url { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Сколько часов данные запуска (auth_date в initData) считаются свежими. Подпись
+    /// бессрочна сама по себе, поэтому окно ограничиваем: перехваченный initData
+    /// не должен работать вечно.
+    /// </summary>
+    public int AuthMaxAgeHours { get; set; } = 24;
+
+    /// <summary>
+    /// ТОЛЬКО для локальной отладки: id пользователя, от имени которого работают запросы
+    /// к API мини-приложения, когда подписанного initData нет (открыли /app в обычном
+    /// браузере). Непусто — проверка подписи ОТКЛЮЧЕНА, на старте пишется предупреждение.
+    /// В рабочей конфигурации должно быть пусто.
+    /// </summary>
+    public string DevUserId { get; set; } = string.Empty;
+
+    /// <summary>Мессенджер отладочного пользователя ("tg" или "max"), см. <see cref="DevUserId"/>.</summary>
+    public string DevUserMessenger { get; set; } = "tg";
+}
+
 /// <summary>Параметры пересылки медиа (скачивание/загрузка вложений, конвертация).</summary>
 public sealed class MediaOptions
 {

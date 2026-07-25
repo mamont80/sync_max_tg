@@ -260,6 +260,51 @@ public sealed class MaxAttachmentRequestPayload
     [JsonPropertyName("photos")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public Dictionary<string, MaxPhotoToken>? Photos { get; set; }
+
+    /// <summary>
+    /// Ряды кнопок; только для вложения type == "inline_keyboard". Массив массивов —
+    /// внешний уровень это ряды, внутренний — кнопки в ряду.
+    /// </summary>
+    [JsonPropertyName("buttons")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<List<MaxButton>>? Buttons { get; set; }
+}
+
+/// <summary>
+/// Кнопка inline-клавиатуры.
+///
+/// ВНИМАНИЕ: точный формат кнопки <c>open_app</c> (открытие мини-приложения) в публичной
+/// документации MAX на момент реализации не описан — заполнен по типовому шаблону Bot API,
+/// как и <c>SubscribeWebhookAsync</c> (см. комментарий ниже по файлу). Если реальный API
+/// отличается — править нужно только этот класс и <c>MaxApiClient.SendMiniAppButtonAsync</c>;
+/// при отказе сервера клиент сам переотправляет сообщение без кнопки, так что расхождение
+/// формата ничего не ломает. Основной способ открыть приложение в MAX всё равно другой —
+/// кнопка, которая появляется в чате сама после привязки URL в кабинете business.max.ru.
+/// </summary>
+public sealed class MaxButton
+{
+    /// <summary>"open_app" | "link" | "callback" | "request_contact" | "request_geo_location" | "chat".</summary>
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = string.Empty;
+
+    [JsonPropertyName("text")]
+    public string Text { get; set; } = string.Empty;
+
+    /// <summary>Адрес — для type == "link".</summary>
+    [JsonPropertyName("url")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Url { get; set; }
+
+    /// <summary>Адрес мини-приложения — для type == "open_app".</summary>
+    [JsonPropertyName("web_app")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MaxWebAppInfo? WebApp { get; set; }
+}
+
+public sealed class MaxWebAppInfo
+{
+    [JsonPropertyName("url")]
+    public string Url { get; set; } = string.Empty;
 }
 
 public sealed class MaxPhotoToken
