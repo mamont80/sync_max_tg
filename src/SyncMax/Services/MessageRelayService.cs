@@ -90,10 +90,12 @@ public sealed class MessageRelayService
                 _logger.LogWarning("Модерация: сообщение из {Messenger}:{ChatId} не переслано ({Reason}).",
                     messenger, chatId, verdict.Reason);
 
+                // Источник репоста в заглушке не показываем: сообщения всё равно нет,
+                // а ссылка на оригинал вела бы ровно на то, что мы решили не пересылать.
                 var header = BuildHeader(messenger, senderName, modified: false);
                 payload = new RelayMessage
                 {
-                    Caption = FormattedText.Plain($"{header}\n{ModerationService.BlockedPlaceholder}"),
+                    Caption = FormattedText.Plain($"{header.Text}\n{ModerationService.BlockedPlaceholder}"),
                     SourceMessageId = message.SourceMessageId,
                     ReplyToTargetMessageId = targetReplyId
                 };
@@ -101,8 +103,9 @@ public sealed class MessageRelayService
             else
             {
                 // «Шапку» ставим первой строкой; если есть текст/подпись — перед ней с переносом.
-                var header = BuildHeader(messenger, senderName, verdict.Decision == ModerationDecision.Masked);
-                var prefix = string.IsNullOrEmpty(verdict.Text.Text) ? header : $"{header}\n";
+                var header = BuildHeader(
+                    messenger, senderName, verdict.Decision == ModerationDecision.Masked, message.Forward);
+                var prefix = string.IsNullOrEmpty(verdict.Text.Text) ? header : header.WithSuffix("\n");
                 payload = message.WithModeratedCaption(verdict.Text).WithCaptionPrefix(prefix, targetReplyId);
             }
 
@@ -130,22 +133,10 @@ public sealed class MessageRelayService
         }
     }
 
-    /// <summary>
-    /// Заголовок пересланного сообщения: "👤 {Имя} · (из MAX)" или "👤 {Имя} · (из TG)" —
-    /// метка отражает мессенджер-источник <paramref name="source"/>, независимо от того,
-    /// куда сообщение пересылается. Само сообщение идёт с новой строки (см. вызов выше).
-    /// <paramref name="modified"/> — текст правил бот (замаскирована брань): читатель должен
-    /// понимать, что видит не дословную копию.
-    /// </summary>
-    private static string BuildHeader(MessengerType source, string? senderName, bool modified)
-    {
-        var sourceTag = source == MessengerType.Max ? "MAX" : "TG";
-        var mark = modified ? " [изменено ботом]" : string.Empty;
-
-        return string.IsNullOrWhiteSpace(senderName)
-            ? $"👤 · (из {sourceTag}){mark}"
-            : $"👤 {senderName} · (из {sourceTag}){mark}";
-    }
+    /// <summary>Служебная «шапка» пересланного сообщения, см. <see cref="RelayHeader"/>.</summary>
+    private static FormattedText BuildHeader(
+        MessengerType source, string? senderName, bool modified, ForwardOrigin? forward = null) =>
+        RelayHeader.Build(source, senderName, modified, forward);
 
     /// <summary>
     /// Переносит правку сообщения: находит по карте пересланную копию оригинала в целевом чате
@@ -183,12 +174,14 @@ public sealed class MessageRelayService
                 messenger, chatId, verdict.Reason);
 
             var blockedHeader = BuildHeader(messenger, senderName, modified: false);
-            payload = FormattedText.Plain($"{blockedHeader}\n{ModerationService.BlockedPlaceholder}");
+            payload = FormattedText.Plain($"{blockedHeader.Text}\n{ModerationService.BlockedPlaceholder}");
         }
         else
         {
+            // Правка приходит без сведений о репосте (платформы их в апдейте правки не
+            // повторяют), поэтому строка с источником здесь не восстанавливается.
             var header = BuildHeader(messenger, senderName, verdict.Decision == ModerationDecision.Masked);
-            var prefix = string.IsNullOrEmpty(verdict.Text.Text) ? header : $"{header}\n";
+            var prefix = string.IsNullOrEmpty(verdict.Text.Text) ? header : header.WithSuffix("\n");
             payload = verdict.Text.WithPrefix(prefix);
         }
 

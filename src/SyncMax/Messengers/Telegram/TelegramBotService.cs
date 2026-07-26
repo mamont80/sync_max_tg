@@ -263,8 +263,47 @@ public sealed class TelegramBotService : BackgroundService
             Caption = caption,
             Attachments = attachment is null ? [] : [attachment],
             SourceMessageId = message.MessageId.ToString(),
-            ReplyToSourceMessageId = message.ReplyToMessage?.MessageId.ToString()
+            ReplyToSourceMessageId = message.ReplyToMessage?.MessageId.ToString(),
+            Forward = BuildForwardOrigin(message)
         };
+    }
+
+    /// <summary>
+    /// Разбирает <c>forward_origin</c> — откуда сообщение было репостнуто в этот чат.
+    /// Telegram различает четыре источника, и данные у них разные: у канала есть и название,
+    /// и id сообщения (значит, можно дать ссылку), у скрытого пользователя — только имя строкой.
+    /// null — сообщение не является репостом.
+    /// </summary>
+    private static ForwardOrigin? BuildForwardOrigin(Message message) => message.ForwardOrigin switch
+    {
+        MessageOriginChannel channel => new ForwardOrigin
+        {
+            Title = channel.Chat.Title ?? channel.Chat.Username,
+            Url = BuildMessageUrl(channel.Chat, channel.MessageId)
+        },
+        MessageOriginChat chat => new ForwardOrigin { Title = chat.SenderChat.Title },
+        MessageOriginUser user => new ForwardOrigin { Title = TelegramApiClient.BuildDisplayName(user.SenderUser) },
+        MessageOriginHiddenUser hidden => new ForwardOrigin { Title = hidden.SenderUserName },
+
+        // Репоста не было либо тип источника незнаком — «шапка» останется как раньше.
+        _ => null
+    };
+
+    /// <summary>
+    /// Ссылка на сообщение канала/супергруппы. У публичных есть @username и ссылка вида
+    /// <c>t.me/name/123</c>; у приватных — только внутренний вид <c>t.me/c/123/456</c>, где
+    /// из id чата убран префикс «-100» (он общий у всех супергрупп и каналов). Такая ссылка
+    /// открывается только у тех, кто состоит в канале, но лучше, чем ничего.
+    /// </summary>
+    private static string? BuildMessageUrl(Chat chat, int messageId)
+    {
+        if (!string.IsNullOrEmpty(chat.Username))
+            return $"https://t.me/{chat.Username}/{messageId}";
+
+        var id = chat.Id.ToString();
+        return id.StartsWith("-100", StringComparison.Ordinal)
+            ? $"https://t.me/c/{id[4..]}/{messageId}"
+            : null;
     }
 
     /// <summary>Определяет тип медиа в сообщении, скачивает его во временный файл и возвращает вложение (или null).</summary>

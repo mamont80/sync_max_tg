@@ -225,27 +225,46 @@ public sealed class MaxBotService : BackgroundService
     private async Task<RelayMessage> BuildRelayMessageAsync(MaxMessage message, CancellationToken ct)
     {
         var body = message.Body;
-        var caption = MaxFormatting.ToFormattedText(body);
+
+        // Репост. MAX присылает в link.forward только текст и вложения оригинала — ни
+        // исходного чата, ни автора там нет, поэтому известен лишь сам факт пересылки:
+        // ни названия источника, ни ссылки на него взять неоткуда.
+        var forwarded = message.Link is { Type: "forward" } ? message.Link.Message : null;
+
+        // ВАЖНО: при репосте MAX оставляет СВОЁ тело пустым — там только mid и text: "" —
+        // а весь настоящий контент (текст, разметку и вложения) кладёт в link.message.
+        // Читая body, мы получали пустое сообщение, и репост с фото или видео молча
+        // отбрасывался проверкой relay.IsEmpty у вызывающего.
+        var content = forwarded is not null && IsEmptyBody(body) ? forwarded : body;
+
+        var caption = MaxFormatting.ToFormattedText(content);
 
         var attachments = new List<MediaAttachment>();
-        foreach (var a in body?.Attachments ?? [])
+        foreach (var a in content?.Attachments ?? [])
         {
             var media = await TryDownloadAttachmentAsync(a, ct);
             if (media is not null)
                 attachments.Add(media);
         }
 
-        // Ответ (reply) — берём mid исходного сообщения из link (forward нас не интересует).
+        // Ответ (reply) — берём mid исходного сообщения из link.
         var replyToMid = message.Link is { Type: "reply", Message.Mid: { } mid } ? mid : null;
 
         return new RelayMessage
         {
             Caption = caption,
             Attachments = attachments,
+            // Именно mid НАШЕГО сообщения, а не оригинала: карта «оригинал ↔ копия» должна
+            // указывать на сообщение в связанном чате, иначе правки и ответы поедут не туда.
             SourceMessageId = body?.Mid,
-            ReplyToSourceMessageId = replyToMid
+            ReplyToSourceMessageId = replyToMid,
+            Forward = forwarded is null ? null : new ForwardOrigin()
         };
     }
+
+    /// <summary>Тело без собственного содержимого — ни текста, ни вложений.</summary>
+    private static bool IsEmptyBody(MaxMessageBody? body) =>
+        string.IsNullOrEmpty(body?.Text) && (body?.Attachments is null || body.Attachments.Count == 0);
 
     private async Task<MediaAttachment?> TryDownloadAttachmentAsync(MaxAttachment attachment, CancellationToken ct)
     {

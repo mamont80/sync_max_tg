@@ -29,9 +29,12 @@ dotnet run --project src/SyncMax
   `IMessengerApiClient` (все реализации приходят через DI, нужная выбирается по
   `MessengerType`). Добавление нового мессенджера = новый `*ApiClient` (реализует
   `IMessengerApiClient`) + новый `*BotService` для приёма.
-- Платформо-независимые модели — `FormattedText`/`TextSpan` (разметка) и
-  `RelayMessage`/`MediaAttachment` (медиа). Вся логика пересылки в
-  `MessageRelayService` работает только с ними, не зная деталей конкретной платформы.
+- Платформо-независимые модели — `FormattedText`/`TextSpan` (разметка),
+  `RelayMessage`/`MediaAttachment` (медиа) и `ForwardOrigin` (источник репоста). Вся логика
+  пересылки в `MessageRelayService` работает только с ними, не зная деталей конкретной
+  платформы. «Шапка» вынесена в `Services/RelayHeader` — чистое форматирование, которое
+  удобно проверять отдельно; она возвращает `FormattedText`, а не строку, потому что несёт
+  ссылку на оригинал репоста.
 - **Мини-приложение.** Бэкенд — `WebApp/` (`MiniAppAuth` — проверка `initData`,
   `MiniAppEndpoints` — `/api/miniapp/*`, DTO) плюс `Services/MiniAppService` со всей
   логикой и проверкой прав; эндпоинты тонкие. Фронт — статика `wwwroot/app` без сборки
@@ -70,6 +73,11 @@ dotnet run --project src/SyncMax
 
 ## На что обратить внимание
 
+- **Репост в MAX приходит с пустым `body`.** Весь контент (текст, разметка, вложения) лежит
+  в `link.message`, а в `body` остаются только `mid` и `text: ""`. Брать содержимое надо
+  оттуда (см. `MaxBotService.BuildRelayMessageAsync`), иначе сообщение выходит пустым и
+  молча отбрасывается по `relay.IsEmpty`. При этом `SourceMessageId` — по-прежнему
+  `body.Mid`: карта `message_links` должна указывать на сообщение в НАШЕМ чате.
 - **DTO и часть эндпоинтов MAX API не задокументированы публично** на момент
   реализации — `MaxModels.cs`, `MaxApiClient`, включая `SubscribeWebhookAsync`
   (`POST /subscriptions`) и кнопку `open_app` (`MaxButton`), заполнены по типовому

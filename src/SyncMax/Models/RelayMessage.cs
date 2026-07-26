@@ -58,6 +58,12 @@ public sealed class RelayMessage
     /// <summary>Id сообщения-оригинала, на которое отвечает исходное (в его мессенджере), если это ответ.</summary>
     public string? ReplyToSourceMessageId { get; init; }
 
+    /// <summary>
+    /// Откуда сообщение было переслано в исходный чат, либо null, если это не репост.
+    /// Показывается отдельной строкой «шапки», см. <see cref="ForwardOrigin"/>.
+    /// </summary>
+    public ForwardOrigin? Forward { get; init; }
+
     /// <summary>Id сообщения в ЦЕЛЕВОМ чате, на которое надо оформить ответ (проставляет relay).</summary>
     public string? ReplyToTargetMessageId { get; init; }
 
@@ -77,6 +83,7 @@ public sealed class RelayMessage
             Attachments = Attachments,
             SourceMessageId = SourceMessageId,
             ReplyToSourceMessageId = ReplyToSourceMessageId,
+            Forward = Forward,
             ReplyToTargetMessageId = ReplyToTargetMessageId
         };
 
@@ -84,13 +91,14 @@ public sealed class RelayMessage
     /// Копия с добавленной в начало подписи служебной «шапкой» и разрешённым целевым id ответа
     /// (см. relay). Остальные поля переносятся как есть.
     /// </summary>
-    public RelayMessage WithCaptionPrefix(string prefix, string? replyToTargetMessageId) =>
+    public RelayMessage WithCaptionPrefix(FormattedText prefix, string? replyToTargetMessageId) =>
         new()
         {
             Caption = Caption.WithPrefix(prefix),
             Attachments = Attachments,
             SourceMessageId = SourceMessageId,
             ReplyToSourceMessageId = ReplyToSourceMessageId,
+            Forward = Forward,
             ReplyToTargetMessageId = replyToTargetMessageId
         };
 }

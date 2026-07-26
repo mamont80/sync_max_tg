@@ -54,16 +54,34 @@ public sealed class FormattedText
     /// офсеты всех участков сдвигаются на длину префикса. Используется для служебной
     /// "шапки" пересылаемого сообщения.
     /// </summary>
-    public FormattedText WithPrefix(string prefix)
+    public FormattedText WithPrefix(string prefix) =>
+        string.IsNullOrEmpty(prefix) ? this : WithPrefix(Plain(prefix));
+
+    /// <summary>
+    /// Возвращает копию с текстом, дописанным в конец. Участки форматирования не меняются:
+    /// они все левее добавленного куска.
+    /// </summary>
+    public FormattedText WithSuffix(string suffix) =>
+        string.IsNullOrEmpty(suffix) ? this : new FormattedText { Text = Text + suffix, Spans = Spans };
+
+    /// <summary>
+    /// Возвращает копию с добавленным в начало ФОРМАТИРОВАННЫМ префиксом: офсеты своих
+    /// участков сдвигаются на длину префикса, участки самого префикса переносятся как есть.
+    /// Нужно для «шапки» со ссылкой на оригинал пересланного сообщения — обычной строкой
+    /// такую ссылку не передать.
+    /// </summary>
+    public FormattedText WithPrefix(FormattedText prefix)
     {
-        if (string.IsNullOrEmpty(prefix))
+        if (string.IsNullOrEmpty(prefix.Text))
             return this;
 
-        var shift = prefix.Length;
-        var shifted = new List<TextSpan>(Spans.Count);
-        foreach (var s in Spans)
-            shifted.Add(new TextSpan { Kind = s.Kind, Offset = s.Offset + shift, Length = s.Length, Url = s.Url });
+        var shift = prefix.Text.Length;
+        var spans = new List<TextSpan>(prefix.Spans.Count + Spans.Count);
+        spans.AddRange(prefix.Spans);
 
-        return new FormattedText { Text = prefix + Text, Spans = shifted };
+        foreach (var s in Spans)
+            spans.Add(new TextSpan { Kind = s.Kind, Offset = s.Offset + shift, Length = s.Length, Url = s.Url });
+
+        return new FormattedText { Text = prefix.Text + Text, Spans = spans };
     }
 }
