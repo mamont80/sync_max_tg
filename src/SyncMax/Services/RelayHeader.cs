@@ -37,7 +37,7 @@ public static class RelayHeader
 
         // Источник неизвестен (так приходит репост из MAX) — сообщаем хотя бы сам факт.
         if (string.IsNullOrWhiteSpace(forward.Title))
-            return FormattedText.Plain($"{header}\n↪️ Переслано");
+            return FormattedText.Plain($"{header}\n↪️ Переслано из приватного источника");
 
         var lead = $"{header}\n↪️ Переслано из «";
         var text = $"{lead}{forward.Title}»";
