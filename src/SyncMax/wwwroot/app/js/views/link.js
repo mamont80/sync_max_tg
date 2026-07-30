@@ -20,6 +20,7 @@ export function openLinkSheet(link, ctx) {
         body.replaceChildren(
             activeCard(),
             directionCard(),
+            videoEmbedCard(),
             deleteButton()
         );
     };
@@ -88,6 +89,36 @@ export function openLinkSheet(link, ctx) {
             el('p', { className: 'row__label', text: 'Направление' }),
             el('p', { className: 'row__hint', text: DIRECTION_HINT[current.direction] || '' }),
             el('div', { className: 'segmented' }, items)
+        ]);
+    }
+
+    function videoEmbedCard() {
+        const toggle = el('button', {
+            className: 'switch',
+            attrs: { type: 'button', role: 'switch', 'aria-checked': String(current.videoEmbed) },
+            on: {
+                click: () => {
+                    const previous = { ...current };
+                    current = { ...current, videoEmbed: !current.videoEmbed };
+                    rerender();
+                    patch({ videoEmbed: current.videoEmbed }, previous);
+                }
+            }
+        });
+
+        return el('section', { className: 'card' }, [
+            el('div', { className: 'row' }, [
+                el('div', { className: 'row__text' }, [
+                    el('p', { className: 'row__label', text: 'Видео из ссылок' }),
+                    el('p', {
+                        className: 'row__hint',
+                        text: current.videoEmbed
+                            ? 'Ссылки на YouTube и Shorts дополняются самим видео в обоих чатах'
+                            : 'Выключено: ссылки на YouTube/Shorts пересылаются как обычный текст'
+                    })
+                ]),
+                toggle
+            ])
         ]);
     }
 

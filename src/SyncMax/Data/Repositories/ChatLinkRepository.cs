@@ -26,10 +26,10 @@ public sealed class ChatLinkRepository
             """
             INSERT INTO chat_links
                 (max_chat_id, max_chat_type, max_user_id, tg_chat_id, tg_chat_type, tg_user_id,
-                 active, title, max_chat_title, tg_chat_title, repost_type, created_at)
+                 active, title, max_chat_title, tg_chat_title, repost_type, created_at, account_id)
             VALUES
                 (@MaxChatId, @MaxChatType, @MaxUserId, @TgChatId, @TgChatType, @TgUserId,
-                 1, @Title, @MaxChatTitle, @TgChatTitle, @RepostType, @CreatedAt);
+                 1, @Title, @MaxChatTitle, @TgChatTitle, @RepostType, @CreatedAt, @AccountId);
             """;
         await conn.ExecuteAsync(new CommandDefinition(sql, link, cancellationToken: ct));
     }
@@ -104,6 +104,15 @@ public sealed class ChatLinkRepository
         const string sql = "UPDATE chat_links SET repost_type = @repostType WHERE id = @id;";
         await conn.ExecuteAsync(new CommandDefinition(sql,
             new { id, repostType = direction.ToCode() }, cancellationToken: ct));
+    }
+
+    /// <summary>Включает/выключает для связки функцию «видео из ссылок».</summary>
+    public async Task SetVideoEmbedAsync(long id, bool enabled, CancellationToken ct)
+    {
+        await using var conn = await _factory.CreateOpenAsync(ct);
+        const string sql = "UPDATE chat_links SET video_embed_enabled = @enabled WHERE id = @id;";
+        await conn.ExecuteAsync(new CommandDefinition(sql,
+            new { id, enabled = enabled ? 1 : 0 }, cancellationToken: ct));
     }
 
     public async Task DeleteAsync(long id, CancellationToken ct)

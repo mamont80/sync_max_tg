@@ -5,7 +5,8 @@ namespace SyncMax.Models;
 /// <c>UserId</c> — идентификатор в мессенджере (open_id для MAX, chat id для Telegram).
 /// Первичный ключ — пара (<c>UserId</c>, <c>Messenger</c>).
 /// Одна физическая персона может иметь до двух записей (по одной на мессенджер),
-/// которые связываются друг с другом через колонку <c>LinkedToUser</c>.
+/// которые связываются друг с другом через колонку <c>LinkedToUser</c> и общий
+/// <see cref="AccountId"/>.
 /// </summary>
 public sealed class User
 {
@@ -33,6 +34,17 @@ public sealed class User
     /// Заполняется у обеих сторон связки.
     /// </summary>
     public string? LinkedToUser { get; set; }
+
+    /// <summary>
+    /// Общий <see cref="Account"/> пары связанных пользователей, либо null у несвязанного.
+    /// Дублирует факт связки, уже выраженный <see cref="LinkedToUser"/>, но нужен как
+    /// точка привязки для данных, относящихся к паре целиком (статистика). Обе колонки
+    /// выставляются и снимаются только в
+    /// <see cref="Data.Repositories.UserRepository.LinkAccountsAsync"/> и
+    /// <see cref="Data.Repositories.UserRepository.UnlinkAsync"/> — по одной транзакции
+    /// на всю связку, поэтому разъехаться не могут.
+    /// </summary>
+    public long? AccountId { get; set; }
 
     /// <summary>
     /// Чат/канал, выбранный этим пользователем репостом сообщения — ожидает,

@@ -109,12 +109,17 @@ public sealed class LinkingService
     /// и сразу присылает новое приглашение связаться (как после /start). Вызывается и
     /// системной командой /clear, и мини-приложением — поведение для обоих должно быть
     /// одинаковым, поэтому логика живёт здесь, а не в вызывающих.
+    ///
+    /// Сам разрыв симметричен: <see cref="UserRepository.UnlinkAsync"/> удаляет аккаунт и
+    /// распускает всю пару. Вызывающие тем не менее зовут этот метод по разу на каждую
+    /// сторону — второй вызов уже ничего не чистит, но именно он отправляет второй стороне
+    /// уведомление и новое приглашение.
     /// </summary>
     public async Task ResetAndNotifyAsync(MessengerType messenger, string userId, CancellationToken ct)
     {
         var lang = (await _users.GetAsync(messenger, userId, ct))?.Language ?? Localization.Fallback;
 
-        await _users.ClearLinkAsync(messenger, userId, ct);
+        await _users.UnlinkAsync(messenger, userId, ct);
         await SendAsync(messenger, userId, Localization.Get(lang, "settings_reset"), ct);
         await SendWelcomeInviteAsync(messenger, userId, ct);
     }
@@ -151,20 +156,16 @@ public sealed class LinkingService
 
         var ownerMessenger = owner.MessengerType;
 
-        // Записываем связку с обеих сторон.
-        await _users.SetLinkedAsync(messenger, userId, owner.UserId, ct);
-        await _users.SetLinkedAsync(ownerMessenger, owner.UserId, userId, ct);
-
-        // Коды больше не нужны.
-        await _users.ClearCodeAsync(ownerMessenger, owner.UserId, ct);
-        await _users.ClearCodeAsync(messenger, userId, ct);
+        // Единственное место, где заводится аккаунт: одной транзакцией создаётся общий
+        // Account, связка записывается с обеих сторон, использованные коды гасятся.
+        var accountId = await _users.LinkAccountsAsync(messenger, userId, ownerMessenger, owner.UserId, ct);
 
         // Сообщаем об успехе обоим сторонам.
         await SendAsync(messenger, userId, Localization.Get(lang, "link_success"), ct);
         await SendAsync(ownerMessenger, owner.UserId, Localization.Get(owner.Language, "link_success"), ct);
 
-        _logger.LogInformation("Связаны {MessengerA}:{UserA} <-> {MessengerB}:{UserB}.",
-            messenger, userId, ownerMessenger, owner.UserId);
+        _logger.LogInformation("Связаны {MessengerA}:{UserA} <-> {MessengerB}:{UserB}, аккаунт {AccountId}.",
+            messenger, userId, ownerMessenger, owner.UserId, accountId);
     }
 
     private Task SendAsync(MessengerType messenger, string userId, string text, CancellationToken ct)

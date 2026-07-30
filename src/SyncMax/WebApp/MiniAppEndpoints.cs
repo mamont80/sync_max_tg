@@ -45,6 +45,14 @@ public static class MiniAppEndpoints
             return Results.NoContent();
         });
 
+        api.MapGet("/stats", async (HttpContext ctx, MiniAppAuth auth, MiniAppService service, CancellationToken ct) =>
+        {
+            if (auth.Authenticate(ctx.Request) is not { } caller)
+                return Unauthorized();
+
+            return Results.Ok(await service.GetStatsAsync(caller, ct));
+        });
+
         api.MapGet("/chat-links", async (HttpContext ctx, MiniAppAuth auth, MiniAppService service, CancellationToken ct) =>
         {
             if (auth.Authenticate(ctx.Request) is not { } caller)

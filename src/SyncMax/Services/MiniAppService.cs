@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using SyncMax.Configuration;
 using SyncMax.Data.Repositories;
 using SyncMax.Models;
+using SyncMax.Services.Stats;
 using SyncMax.WebApp;
 
 namespace SyncMax.Services;
@@ -18,6 +19,8 @@ public sealed class MiniAppService
     private readonly UserRepository _users;
     private readonly ChatLinkRepository _chatLinks;
     private readonly MessageLinkRepository _messageLinks;
+    private readonly RelayStatsRepository _stats;
+    private readonly RelayStatsWriter _statsWriter;
     private readonly LinkingService _linking;
     private readonly LinkingOptions _options;
     private readonly ILogger<MiniAppService> _logger;
@@ -26,6 +29,8 @@ public sealed class MiniAppService
         UserRepository users,
         ChatLinkRepository chatLinks,
         MessageLinkRepository messageLinks,
+        RelayStatsRepository stats,
+        RelayStatsWriter statsWriter,
         LinkingService linking,
         IOptions<LinkingOptions> options,
         ILogger<MiniAppService> logger)
@@ -33,6 +38,8 @@ public sealed class MiniAppService
         _users = users;
         _chatLinks = chatLinks;
         _messageLinks = messageLinks;
+        _stats = stats;
+        _statsWriter = statsWriter;
         _linking = linking;
         _options = options.Value;
         _logger = logger;
@@ -91,6 +98,62 @@ public sealed class MiniAppService
             caller.Messenger, caller.UserId);
     }
 
+    /// <summary>
+    /// Экран статистики. Всё выбирается по <c>account_id</c> вызывающего, поэтому отдельной
+    /// проверки прав здесь нет — чужие показатели недостижимы по построению запроса.
+    /// Аккаунта нет (мессенджеры не связаны) — возвращаем пустой ответ с <c>Linked = false</c>:
+    /// статистика ведётся по паре, а её ещё не существует.
+    /// </summary>
+    public async Task<StatsResponse> GetStatsAsync(MiniAppUser caller, CancellationToken ct)
+    {
+        var user = await _users.GetAsync(caller.Messenger, caller.UserId, ct);
+
+        if (user?.AccountId is not { } accountId)
+            return EmptyStats;
+
+        // Между фоновыми выгрузками показатели живут только в ОЗУ. Не выгрузив их здесь,
+        // мы показали бы пустой экран тому, кто переслал сообщение минуту назад, — и он
+        // сделал бы вывод, что статистика не работает. Экран открывают несравнимо реже,
+        // чем пересылают сообщения, поэтому лишняя транзакция тут ничего не стоит.
+        await _statsWriter.FlushAsync(ct);
+
+        var totals = await _stats.GetTotalsAsync(accountId, ct);
+        var days = await _stats.GetDailyAsync(accountId, DaysShown, ct);
+        var months = await _stats.GetMonthlyAsync(accountId, MonthsShown, ct);
+        var links = await _stats.GetByLinksAsync(accountId, ct);
+
+        return new StatsResponse
+        {
+            Linked = true,
+            Total = new StatsTotalsResponse
+            {
+                Messages = totals.Messages,
+                Bytes = totals.Bytes,
+                MaxToTg = totals.MaxToTg,
+                TgToMax = totals.TgToMax,
+                TextBytes = totals.TextBytes,
+                PhotoCount = totals.PhotoCount,
+                PhotoBytes = totals.PhotoBytes,
+                VideoCount = totals.VideoCount,
+                VideoBytes = totals.VideoBytes,
+                AudioCount = totals.AudioCount,
+                AudioBytes = totals.AudioBytes,
+                FileCount = totals.FileCount,
+                FileBytes = totals.FileBytes
+            },
+            Days = days.Select(ToResponse).ToList(),
+            Months = months.Select(ToResponse).ToList(),
+            Links = links.Select(l => new StatsLinkResponse
+            {
+                Id = l.ChatLinkId,
+                Title = l.Title,
+                Deleted = l.Title is null,
+                Messages = l.Messages,
+                Bytes = l.Bytes
+            }).ToList()
+        };
+    }
+
     /// <summary>Связки чатов, доступные вызывающему.</summary>
     public async Task<IReadOnlyList<ChatLinkResponse>> ListChatLinksAsync(MiniAppUser caller, CancellationToken ct)
     {
@@ -136,6 +199,13 @@ public sealed class MiniAppService
                 _logger.LogInformation("[MiniApp] У связки {Id} \"{Title}\" направление изменено на {Direction}.",
                     id, link.Title, direction);
             }
+        }
+
+        if (request.VideoEmbed is { } videoEmbed && videoEmbed != link.VideoEmbedEnabled)
+        {
+            await _chatLinks.SetVideoEmbedAsync(id, videoEmbed, ct);
+            _logger.LogInformation("[MiniApp] У связки {Id} \"{Title}\" функция «видео из ссылок»: {Enabled}.",
+                id, link.Title, videoEmbed);
         }
 
         var updated = await _chatLinks.GetByIdAsync(id, ct);
@@ -209,6 +279,35 @@ public sealed class MiniAppService
             : (counterpartUserId, caller.UserId);
     }
 
+    /// <summary>Сколько суток и месяцев показывает экран статистики.</summary>
+    private const int DaysShown = 30;
+
+    private const int MonthsShown = 12;
+
+    /// <summary>Ответ для не связанного аккаунта: нулевые итоги и пустые списки.</summary>
+    private static readonly StatsResponse EmptyStats = new()
+    {
+        Linked = false,
+        Total = new StatsTotalsResponse
+        {
+            Messages = 0, Bytes = 0, MaxToTg = 0, TgToMax = 0, TextBytes = 0,
+            PhotoCount = 0, PhotoBytes = 0, VideoCount = 0, VideoBytes = 0,
+            AudioCount = 0, AudioBytes = 0, FileCount = 0, FileBytes = 0
+        },
+        Days = [],
+        Months = [],
+        Links = []
+    };
+
+    private static StatsPeriodResponse ToResponse(RelayStatsPeriod period) => new()
+    {
+        Period = period.Period,
+        Messages = period.Messages,
+        Bytes = period.Bytes,
+        MaxToTg = period.MaxToTg,
+        TgToMax = period.TgToMax
+    };
+
     private static ChatLinkResponse ToResponse(ChatLink link) => new()
     {
         Id = link.Id,
@@ -219,6 +318,7 @@ public sealed class MiniAppService
         TgKind = link.TgChatType,
         Active = link.Active,
         Direction = link.RepostType,
+        VideoEmbed = link.VideoEmbedEnabled,
         CreatedAt = link.CreatedAt
     };
 

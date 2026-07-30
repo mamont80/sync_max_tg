@@ -45,6 +45,22 @@ public sealed class ChatLink
 
     public string CreatedAt { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Аккаунт пары, создавшей связку. По нему копится статистика пересылки, поэтому он
+    /// хранится прямо здесь: резолвить его через <c>users</c> на каждом сообщении значило
+    /// бы лишний запрос к БД на горячем пути. null — у связок, чей аккаунт распался
+    /// (<c>ON DELETE SET NULL</c>), и у не подхваченных бэкфилом миграции M008; статистика
+    /// по таким связкам не пишется.
+    /// </summary>
+    public long? AccountId { get; set; }
+
+    /// <summary>
+    /// Включена ли для связки функция «видео из ссылок» (см. <see cref="Services.VideoEmbed.VideoEmbedRelayService"/>).
+    /// По умолчанию включена (столбец добавлен миграцией M010 с DEFAULT 1) — это опциональное
+    /// дополнение к пересылке, а не обязательная часть, поэтому его можно выключить per-связке.
+    /// </summary>
+    public bool VideoEmbedEnabled { get; set; } = true;
+
     public ChatKind MaxChatKind => ChatKindExtensions.FromCode(MaxChatType);
 
     public ChatKind TgChatKind => ChatKindExtensions.FromCode(TgChatType);

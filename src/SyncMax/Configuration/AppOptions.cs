@@ -132,6 +132,26 @@ public sealed class CleanupOptions
 }
 
 /// <summary>
+/// Параметры статистики пересылки (<see cref="Services.Stats.RelayStatsCollector"/> и
+/// <see cref="Services.Stats.RelayStatsFlushService"/>). Показатели копятся в ОЗУ и
+/// уходят в БД пачкой — интервал задаёт, какой период теряется при аварийном
+/// завершении процесса.
+/// </summary>
+public sealed class StatsOptions
+{
+    public const string Section = "Stats";
+
+    /// <summary>Как часто накопленное переносится в БД. Меньше минуты не бывает.</summary>
+    public int FlushIntervalMinutes { get; set; } = 5;
+
+    /// <summary>
+    /// Задержка перед первой выгрузкой после старта: даём приложению поднять ботов
+    /// и применить миграции, не соревнуясь с ними за базу.
+    /// </summary>
+    public int StartupDelaySeconds { get; set; } = 30;
+}
+
+/// <summary>
 /// Параметры мини-приложения (веб-интерфейс, открываемый из чата с ботом). Адрес один
 /// на оба мессенджера: платформа определяется на фронте по доступному мосту, а на бэке —
 /// по префиксу в заголовке Authorization (см. <c>WebApp/MiniAppAuth</c>).
@@ -164,6 +184,36 @@ public sealed class MiniAppOptions
 
     /// <summary>Мессенджер отладочного пользователя ("tg" или "max"), см. <see cref="DevUserId"/>.</summary>
     public string DevUserMessenger { get; set; } = "tg";
+}
+
+/// <summary>
+/// Параметры опциональной функции «видео из ссылок» (<see cref="Services.VideoEmbed.VideoEmbedRelayService"/>):
+/// когда в пересылаемом сообщении есть ссылка на YouTube-видео/Shorts, бот дополнительно скачивает
+/// само видео через внешний сервис (см. c:\sync_video) и публикует его отдельным сообщением в оба
+/// чата связки. Включена/выключена per-связке (<c>chat_links.video_embed_enabled</c>, по умолчанию
+/// включена) — эти настройки лишь про сам внешний сервис.
+/// </summary>
+public sealed class VideoEmbedOptions
+{
+    public const string Section = "VideoEmbed";
+
+    /// <summary>
+    /// Базовый адрес сервиса-загрузчика (напр. http://video.mishaserver.ru:5001). Пусто — функция
+    /// отключена целиком, независимо от настроек связок (сервис не с кем работать).
+    /// </summary>
+    public string BaseUrl { get; set; } = string.Empty;
+
+    /// <summary>Заголовок X-API-Key, если на сервисе задан API_KEY. Пусто — заголовок не отправляется.</summary>
+    public string ApiKey { get; set; } = string.Empty;
+
+    /// <summary>Пауза между опросами статуса задачи.</summary>
+    public int PollIntervalSeconds { get; set; } = 3;
+
+    /// <summary>
+    /// Сколько максимум ждать готовности видео (очередь + скачивание), прежде чем сдаться.
+    /// Сервис держит задачу в очереди до 10 минут (QUEUE_TIMEOUT_SECONDS) — ждём чуть дольше.
+    /// </summary>
+    public int MaxWaitSeconds { get; set; } = 660;
 }
 
 /// <summary>Параметры пересылки медиа (скачивание/загрузка вложений, конвертация).</summary>

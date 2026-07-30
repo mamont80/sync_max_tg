@@ -7,6 +7,7 @@
 import { platform } from './platform.js';
 import { renderLinks } from './views/links.js';
 import { renderSupport } from './views/support.js';
+import { renderStats } from './views/stats.js';
 import { renderSoon } from './views/soon.js';
 
 const TITLES = {
@@ -106,6 +107,11 @@ function render(tab) {
 
     if (tab === 'support') {
         renderSupport(screen, ctx);
+        return;
+    }
+
+    if (tab === 'stats') {
+        renderStats(screen, ctx);
         return;
     }
 

@@ -49,16 +49,101 @@ public sealed record ChatLinkResponse
     /// <summary>"max_to_tg" | "tg_to_max" | "both".</summary>
     public required string Direction { get; init; }
 
+    /// <summary>Включена ли функция «видео из ссылок» (см. VideoEmbedRelayService).</summary>
+    public required bool VideoEmbed { get; init; }
+
     public required string CreatedAt { get; init; }
 }
 
-/// <summary>Тело PATCH: оба поля необязательны, меняется только присланное.</summary>
+/// <summary>Тело PATCH: поля необязательны, меняется только присланное.</summary>
 public sealed record UpdateChatLinkRequest
 {
     public bool? Active { get; init; }
 
     /// <summary>"max_to_tg" | "tg_to_max" | "both".</summary>
     public string? Direction { get; init; }
+
+    public bool? VideoEmbed { get; init; }
+}
+
+/// <summary>
+/// Экран статистики целиком — одним ответом. Три отдельных запроса ради одного экрана
+/// на мобильном интернете дороже, чем этот ответ целиком: данных здесь единицы килобайт.
+/// </summary>
+public sealed record StatsResponse
+{
+    /// <summary>Аккаунты ещё не связаны — считать нечего, интерфейс зовёт связать.</summary>
+    public required bool Linked { get; init; }
+
+    public required StatsTotalsResponse Total { get; init; }
+
+    /// <summary>Последние сутки с активностью, свежие сверху.</summary>
+    public required IReadOnlyList<StatsPeriodResponse> Days { get; init; }
+
+    /// <summary>Последние месяцы с активностью, свежие сверху.</summary>
+    public required IReadOnlyList<StatsPeriodResponse> Months { get; init; }
+
+    /// <summary>Итоги по связкам чатов за всё время.</summary>
+    public required IReadOnlyList<StatsLinkResponse> Links { get; init; }
+}
+
+/// <summary>Итог за всё время: сообщения, объём и из чего этот объём состоит.</summary>
+public sealed record StatsTotalsResponse
+{
+    public required long Messages { get; init; }
+
+    public required long Bytes { get; init; }
+
+    public required long MaxToTg { get; init; }
+
+    public required long TgToMax { get; init; }
+
+    public required long TextBytes { get; init; }
+
+    public required long PhotoCount { get; init; }
+
+    public required long PhotoBytes { get; init; }
+
+    public required long VideoCount { get; init; }
+
+    public required long VideoBytes { get; init; }
+
+    public required long AudioCount { get; init; }
+
+    public required long AudioBytes { get; init; }
+
+    public required long FileCount { get; init; }
+
+    public required long FileBytes { get; init; }
+}
+
+/// <summary>Строка периода: "2026-07-29" для суток, "2026-07" для месяца.</summary>
+public sealed record StatsPeriodResponse
+{
+    public required string Period { get; init; }
+
+    public required long Messages { get; init; }
+
+    public required long Bytes { get; init; }
+
+    public required long MaxToTg { get; init; }
+
+    public required long TgToMax { get; init; }
+}
+
+/// <summary>Итог по связке чатов. У удалённой связки названия нет — см. <see cref="Deleted"/>.</summary>
+public sealed record StatsLinkResponse
+{
+    public required long Id { get; init; }
+
+    public string? Title { get; init; }
+
+    /// <summary>Связка удалена, но её вклад в суммы аккаунта сохранён.</summary>
+    public required bool Deleted { get; init; }
+
+    public required long Messages { get; init; }
+
+    public required long Bytes { get; init; }
 }
 
 /// <summary>Единый вид ошибки — интерфейс показывает <c>error</c> как есть.</summary>

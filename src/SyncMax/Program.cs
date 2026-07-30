@@ -1,11 +1,4 @@
 using Dapper;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using SyncMax.Configuration;
 using SyncMax.Data;
 using SyncMax.Data.Migrations;
@@ -16,6 +9,8 @@ using SyncMax.Messengers.Max;
 using SyncMax.Messengers.Telegram;
 using SyncMax.Services;
 using SyncMax.Services.Moderation;
+using SyncMax.Services.Stats;
+using SyncMax.Services.VideoEmbed;
 using SyncMax.WebApp;
 using System.Text;
 using System.Text.Json;
@@ -56,12 +51,16 @@ try
     builder.Services.Configure<MediaOptions>(builder.Configuration.GetSection(MediaOptions.Section));
     builder.Services.Configure<MiniAppOptions>(builder.Configuration.GetSection(MiniAppOptions.Section));
     builder.Services.Configure<CleanupOptions>(builder.Configuration.GetSection(CleanupOptions.Section));
+    builder.Services.Configure<StatsOptions>(builder.Configuration.GetSection(StatsOptions.Section));
+    builder.Services.Configure<VideoEmbedOptions>(builder.Configuration.GetSection(VideoEmbedOptions.Section));
 
     // --- Данные ---
     builder.Services.AddSingleton<SqliteConnectionFactory>();
     builder.Services.AddSingleton<UserRepository>();
+    builder.Services.AddSingleton<AccountRepository>();
     builder.Services.AddSingleton<ChatLinkRepository>();
     builder.Services.AddSingleton<MessageLinkRepository>();
+    builder.Services.AddSingleton<RelayStatsRepository>();
 
     // --- Миграции (регистрируйте здесь новые версии по возрастанию) ---
     builder.Services.AddSingleton<IMigration, M001_InitialSchema>();
@@ -70,6 +69,10 @@ try
     builder.Services.AddSingleton<IMigration, M004_MessageLinks>();
     builder.Services.AddSingleton<IMigration, M005_ChatLinkTitles>();
     builder.Services.AddSingleton<IMigration, M006_MessageLinksCreatedAtIndex>();
+    builder.Services.AddSingleton<IMigration, M007_Accounts>();
+    builder.Services.AddSingleton<IMigration, M008_ChatLinkAccount>();
+    builder.Services.AddSingleton<IMigration, M009_RelayStats>();
+    builder.Services.AddSingleton<IMigration, M010_ChatLinkVideoEmbed>();
     builder.Services.AddSingleton<MigrationRunner>();
 
     // --- Сервисы ---
@@ -78,10 +81,19 @@ try
     builder.Services.AddSingleton<ChatLinkingService>();
     builder.Services.AddSingleton<SystemCommandService>();
     builder.Services.AddSingleton<MessageRelayService>();
+
+    // Статистика пересылки: накопитель в ОЗУ + фоновая выгрузка пачкой (см. RelayStatsCollector).
+    builder.Services.AddSingleton<RelayStatsCollector>();
+    builder.Services.AddSingleton<RelayStatsWriter>();
     builder.Services.AddSingleton<MediaConverter>();
 
     // Модерация: через неё проходит всё, что уходит в связанный чат.
     builder.Services.AddSingleton<ModerationService>();
+
+    // Опциональная функция «видео из ссылок»: скачивание YouTube/Shorts через внешний сервис
+    // и публикация видео в оба чата связки (см. VideoEmbedRelayService).
+    builder.Services.AddHttpClient<VideoEmbedClient>();
+    builder.Services.AddSingleton<VideoEmbedRelayService>();
 
     // --- Мини-приложение: проверка данных запуска + логика экранов ---
     builder.Services.AddSingleton<MiniAppAuth>();
@@ -121,6 +133,9 @@ try
 
     // --- Фоновая уборка БД: удаление устаревших записей message_links партиями ---
     builder.Services.AddHostedService<MessageLinkCleanupService>();
+
+    // --- Фоновая выгрузка статистики: накопленное в ОЗУ уходит в БД одной транзакцией ---
+    builder.Services.AddHostedService<RelayStatsFlushService>();
 
     var app = builder.Build();
 

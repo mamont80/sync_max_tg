@@ -3,6 +3,8 @@ using SyncMax.Data.Repositories;
 using SyncMax.Messengers;
 using SyncMax.Models;
 using SyncMax.Services.Moderation;
+using SyncMax.Services.Stats;
+using SyncMax.Services.VideoEmbed;
 
 namespace SyncMax.Services;
 
@@ -25,17 +27,22 @@ public sealed class MessageRelayService
     private readonly ChatLinkRepository _chatLinks;
     private readonly MessageLinkRepository _messageLinks;
     private readonly ModerationService _moderation;
+    private readonly RelayStatsCollector _stats;
+    private readonly VideoEmbedRelayService _videoEmbed;
     private readonly IReadOnlyDictionary<MessengerType, IMessengerApiClient> _clients;
     private readonly ILogger<MessageRelayService> _logger;
 
     public MessageRelayService(
         ChatLinkRepository chatLinks, MessageLinkRepository messageLinks,
-        ModerationService moderation, IEnumerable<IMessengerApiClient> clients,
+        ModerationService moderation, RelayStatsCollector stats, VideoEmbedRelayService videoEmbed,
+        IEnumerable<IMessengerApiClient> clients,
         ILogger<MessageRelayService> logger)
     {
         _chatLinks = chatLinks;
         _messageLinks = messageLinks;
         _moderation = moderation;
+        _stats = stats;
+        _videoEmbed = videoEmbed;
         _clients = clients.ToDictionary(c => c.Messenger);
         _logger = logger;
     }
@@ -107,9 +114,24 @@ public sealed class MessageRelayService
                     messenger, senderName, verdict.Decision == ModerationDecision.Masked, message.Forward);
                 var prefix = string.IsNullOrEmpty(verdict.Text.Text) ? header : header.WithSuffix("\n");
                 payload = message.WithModeratedCaption(verdict.Text).WithCaptionPrefix(prefix, targetReplyId);
+
+                // Опциональная функция «видео из ссылок» — по исходному (не промодерированному)
+                // тексту: ссылка модерацией не трогается, а маскировка мата урезала бы её только
+                // случайно. Запускается в фоне и не влияет на время обработки этого сообщения.
+                _videoEmbed.TryRelayInBackground(link, messenger, chatId, senderName, message.Caption);
             }
 
+            // Объём вложений снимаем ДО отправки: в finally временные файлы удаляются, а по
+            // самому вложению их размер уже не восстановить. Меряем именно payload —
+            // заблокированное модерацией сообщение уходит заглушкой без медиа, и трафика
+            // у него нет.
+            var sizes = MeasureAttachments(payload.Attachments);
+
             var sentId = await client.SendChatMessageAsync(targetChatId, payload, ct);
+
+            // Статистика — после успешной отправки и без похода в БД: накопитель складывает
+            // всё в памяти, а на диск это уходит пачкой раз в несколько минут.
+            RecordStats(link, messenger, payload, sizes);
 
             // Запоминаем связку «оригинал ↔ пересланная копия» для будущих ответов.
             if (sentId is not null && message.SourceMessageId is { } sourceId)
@@ -131,6 +153,50 @@ public sealed class MessageRelayService
             foreach (var att in message.Attachments)
                 TempFiles.TryDelete(att.FilePath);
         }
+    }
+
+    /// <summary>
+    /// Учитывает перенесённое сообщение в статистике аккаунта. Связка без аккаунта
+    /// (пара распалась либо её не подхватил бэкфил миграции M008) просто не считается:
+    /// вешать показатели некуда, а пересылке это мешать не должно.
+    /// </summary>
+    private void RecordStats(ChatLink link, MessengerType source, RelayMessage sent, IReadOnlyList<long> sizes)
+    {
+        if (link.AccountId is not { } accountId)
+            return;
+
+        // Направление здесь — факт переноса, а не настройка связки: у Both в статистику
+        // идёт та сторона, в которую сообщение реально ушло.
+        var direction = source == MessengerType.Max ? RepostDirection.MaxToTg : RepostDirection.TgToMax;
+
+        _stats.Record(accountId, link.Id, direction,
+            RelayStatsDelta.From(sent.Caption, sent.Attachments, sizes));
+    }
+
+    /// <summary>
+    /// Размеры файлов вложений в порядке самих вложений. Недоступный файл считается
+    /// нулевым: статистика не повод ронять пересылку.
+    /// </summary>
+    private static IReadOnlyList<long> MeasureAttachments(IReadOnlyList<MediaAttachment> attachments)
+    {
+        if (attachments.Count == 0)
+            return [];
+
+        var sizes = new long[attachments.Count];
+        for (var i = 0; i < attachments.Count; i++)
+        {
+            try
+            {
+                var file = new FileInfo(attachments[i].FilePath);
+                sizes[i] = file.Exists ? file.Length : 0;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                sizes[i] = 0;
+            }
+        }
+
+        return sizes;
     }
 
     /// <summary>Служебная «шапка» пересланного сообщения, см. <see cref="RelayHeader"/>.</summary>

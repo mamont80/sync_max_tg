@@ -59,6 +59,7 @@ export const api = {
     profile: () => request('GET', '/me'),
     refreshLinkCode: () => request('POST', '/link-code'),
     unlink: () => request('POST', '/unlink'),
+    stats: () => request('GET', '/stats'),
     chatLinks: () => request('GET', '/chat-links'),
     updateChatLink: (id, patch) => request('PATCH', `/chat-links/${id}`, patch),
     deleteChatLink: (id) => request('DELETE', `/chat-links/${id}`)

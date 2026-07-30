@@ -95,7 +95,10 @@ public sealed class ChatLinkingService
                 MaxChatTitle = maxChatTitle,
                 TgChatTitle = tgChatTitle,
                 RepostType = RepostDirection.Both.ToCode(),
-                CreatedAt = DateTimeOffset.UtcNow.ToString("o")
+                CreatedAt = DateTimeOffset.UtcNow.ToString("o"),
+                // Аккаунт у обеих сторон общий (связка аккаунтов на то и связка),
+                // поэтому берём тот, что уже прочитан вместе с пользователем.
+                AccountId = user.AccountId
             };
             await _chatLinks.CreateAsync(link, ct);
 

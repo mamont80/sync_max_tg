@@ -399,6 +399,82 @@ button {
     color: var(--sm-accent);
 }
 
+/* Переключатель на две позиции (дни/месяцы) — тот же контрол, но не в три колонки. */
+.segmented--pair {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+/* ---------- Статистика ---------- */
+
+.stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--sm-gap);
+    margin-top: 10px;
+}
+
+.stat__value {
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    /* Длинное число не должно распирать колонку и ломать сетку из двух плиток. */
+    word-break: break-word;
+}
+
+.stat__label {
+    margin-top: 2px;
+    font-size: 13px;
+    color: var(--sm-hint);
+}
+
+/*
+  Доля одного вида вложений в объёме. Полоски одноцветные: величину показывает длина,
+  а что именно измерено — подпись рядом. Цвет здесь ничего не кодирует, поэтому и
+  палитры по видам медиа нет.
+*/
+.meter {
+    margin-top: 12px;
+}
+
+.meter__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.meter__label {
+    font-size: 14px;
+    min-width: 0;
+}
+
+.meter__value {
+    flex: none;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.meter__track {
+    margin-top: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--sm-secondary-bg);
+    overflow: hidden;
+}
+
+.meter__fill {
+    height: 100%;
+    border-radius: 999px;
+    background: var(--sm-accent);
+}
+
+/* Правая колонка строки периода: число сообщений и объём под ним. */
+.row__side {
+    flex: none;
+    text-align: right;
+}
+
 /* ---------- Пустые состояния, ошибки, загрузка ---------- */
 
 .empty {
