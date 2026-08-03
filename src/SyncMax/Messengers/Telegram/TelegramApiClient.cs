@@ -136,7 +136,8 @@ public sealed class TelegramApiClient : IMessengerApiClient
         if (!message.HasMedia)
         {
             var sent = await bot.SendMessage(id, message.Caption.Text,
-                entities: TelegramFormatting.ToEntities(message.Caption), replyParameters: reply, cancellationToken: ct);
+                entities: TelegramFormatting.ToEntities(message.Caption), replyParameters: reply,
+                linkPreviewOptions: LinkPreview(message.DisableLinkPreview), cancellationToken: ct);
             return sent.MessageId.ToString();
         }
 
@@ -205,6 +206,14 @@ public sealed class TelegramApiClient : IMessengerApiClient
         }
     }
 
+    /// <summary>
+    /// Настройка превью ссылок: null — поведение по умолчанию (Telegram разворачивает превью
+    /// первой ссылки). Передаётся и при отправке, и при правке: правка перестраивает превью
+    /// заново, и без этого параметра оно вернулось бы обратно.
+    /// </summary>
+    private static LinkPreviewOptions? LinkPreview(bool disabled) =>
+        disabled ? new LinkPreviewOptions { IsDisabled = true } : null;
+
     private static ReplyParameters? ParseReply(string? targetMessageId) =>
         int.TryParse(targetMessageId, out var mid) ? new ReplyParameters { MessageId = mid } : null;
 
@@ -212,7 +221,9 @@ public sealed class TelegramApiClient : IMessengerApiClient
     /// Редактирует текст (для текстового сообщения) или подпись (для медиа) — через entities,
     /// без parse_mode. Медиа при правке подписи сохраняется.
     /// </summary>
-    public async Task EditChatMessageAsync(string chatId, string messageId, FormattedText caption, bool isMediaCaption, CancellationToken ct)
+    public async Task EditChatMessageAsync(
+        string chatId, string messageId, FormattedText caption, bool isMediaCaption, bool disableLinkPreview,
+        CancellationToken ct)
     {
         if (BotClient is not { } bot || !int.TryParse(messageId, out var mid))
             return;
@@ -224,11 +235,51 @@ public sealed class TelegramApiClient : IMessengerApiClient
             if (isMediaCaption)
                 await bot.EditMessageCaption(id, mid, caption: caption.Text, captionEntities: entities, cancellationToken: ct);
             else
-                await bot.EditMessageText(id, mid, caption.Text, entities: entities, cancellationToken: ct);
+                await bot.EditMessageText(id, mid, caption.Text, entities: entities,
+                    linkPreviewOptions: LinkPreview(disableLinkPreview), cancellationToken: ct);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Telegram: не удалось отредактировать сообщение {Mid}.", mid);
+        }
+    }
+
+    /// <summary>
+    /// Заменяет содержимое сообщения на медиа (editMessageMedia). Bot API умеет добавлять
+    /// медиа и к чисто текстовому сообщению — именно на этом держится статусное сообщение
+    /// «видео из ссылок»: текст «скачивается…» превращается в само видео, оставаясь на своём
+    /// месте в ленте.
+    /// </summary>
+    public async Task<bool> TryReplaceChatMessageMediaAsync(
+        string chatId, string messageId, MediaAttachment media, FormattedText caption, CancellationToken ct)
+    {
+        if (BotClient is not { } bot || !int.TryParse(messageId, out var mid))
+            return false;
+
+        var text = caption.Text is { Length: > 0 } t ? t : null;
+        var entities = TelegramFormatting.ToEntities(caption);
+        var name = media.FileName ?? Path.GetFileName(media.FilePath);
+
+        try
+        {
+            await using var fs = File.OpenRead(media.FilePath);
+            var input = InputFile.FromStream(fs, name);
+            InputMedia content = media.Kind switch
+            {
+                MediaKind.Photo => new InputMediaPhoto(input) { Caption = text, CaptionEntities = entities },
+                MediaKind.Video => new InputMediaVideo(input) { Caption = text, CaptionEntities = entities },
+                MediaKind.Animation => new InputMediaAnimation(input) { Caption = text, CaptionEntities = entities },
+                MediaKind.Audio => new InputMediaAudio(input) { Caption = text, CaptionEntities = entities },
+                _ => new InputMediaDocument(input) { Caption = text, CaptionEntities = entities }
+            };
+
+            await bot.EditMessageMedia(long.Parse(chatId), mid, content, cancellationToken: ct);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Telegram: не удалось заменить содержимое сообщения {Mid} на {Kind}.", mid, media.Kind);
+            return false;
         }
     }
 

@@ -43,10 +43,28 @@ public interface IMessengerApiClient
     /// <summary>
     /// Редактирует ранее отправленное сообщение в чате: новый текст/подпись (с «шапкой»).
     /// <paramref name="isMediaCaption"/> = true, если сообщение с медиа (правим подпись, а не
-    /// текстовое сообщение). Медиа при этом сохраняется. Ошибки (в т.ч. истёкшее окно правки
+    /// текстовое сообщение). Медиа при этом сохраняется. <paramref name="disableLinkPreview"/>
+    /// задаётся при каждой правке, а не наследуется от исходного сообщения: обе платформы
+    /// разворачивают превью заново по новому тексту. Ошибки (в т.ч. истёкшее окно правки
     /// у MAX) логируются, не пробрасываются.
     /// </summary>
-    Task EditChatMessageAsync(string chatId, string messageId, FormattedText caption, bool isMediaCaption, CancellationToken ct);
+    Task EditChatMessageAsync(
+        string chatId, string messageId, FormattedText caption, bool isMediaCaption, bool disableLinkPreview,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Заменяет содержимое ранее отправленного сообщения на медиа-вложение с подписью —
+    /// в том числе у сообщения, которое было чисто текстовым. Нужно для «долгих» вложений
+    /// (см. <c>VideoEmbedRelayService</c>): сообщение занимает своё место в чате сразу,
+    /// показывая ход загрузки, а готовое видео встаёт в него же, не уезжая вниз за все
+    /// сообщения, пришедшие пока оно качалось.
+    ///
+    /// Возвращает false, если платформа замену не выполнила (не поддерживает, истекло окно
+    /// правки, сообщения уже нет) — вызывающий в этом случае должен удалить сообщение и
+    /// отправить содержимое заново. Ошибки логируются, не пробрасываются.
+    /// </summary>
+    Task<bool> TryReplaceChatMessageMediaAsync(
+        string chatId, string messageId, MediaAttachment media, FormattedText caption, CancellationToken ct);
 
     /// <summary>Удаляет ранее отправленное сообщение в чате. Ошибки логируются, не пробрасываются.</summary>
     Task DeleteChatMessageAsync(string chatId, string messageId, CancellationToken ct);

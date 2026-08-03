@@ -166,7 +166,8 @@ public sealed class MaxApiClient : IMessengerApiClient
     public async Task<string?> SendChatMessageAsync(string chatId, RelayMessage message, CancellationToken ct)
     {
         if (!message.HasMedia)
-            return await SendMessageBodyAsync(chatId, message.Caption, attachments: null, message.ReplyToTargetMessageId, ct);
+            return await SendMessageBodyAsync(
+                chatId, message.Caption, attachments: null, message.ReplyToTargetMessageId, message.DisableLinkPreview, ct);
 
         string? firstId = null;
         var captionConsumed = false;
@@ -206,13 +207,13 @@ public sealed class MaxApiClient : IMessengerApiClient
             try
             {
                 var attach = await UploadAsync(maxType, path, fileName, mime, ct);
-                return await SendMessageBodyAsync(chatId, caption, [attach], replyMid, ct);
+                return await SendMessageBodyAsync(chatId, caption, [attach], replyMid, disableLinkPreview: false, ct);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "MAX: не удалось отправить {Kind} как {MaxType}, откат на файл.", att.Kind, maxType);
                 var attach = await UploadAsync("file", att.FilePath, att.FileName ?? Path.GetFileName(att.FilePath), att.MimeType, ct);
-                return await SendMessageBodyAsync(chatId, caption, [attach], replyMid, ct);
+                return await SendMessageBodyAsync(chatId, caption, [attach], replyMid, disableLinkPreview: false, ct);
             }
         }
         finally
@@ -318,7 +319,8 @@ public sealed class MaxApiClient : IMessengerApiClient
     /// обрабатывается сервером. Возвращает mid отправленного сообщения (для карты ответов) или null.
     /// </summary>
     private async Task<string?> SendMessageBodyAsync(
-        string chatId, FormattedText caption, List<MaxAttachmentRequest>? attachments, string? replyMid, CancellationToken ct)
+        string chatId, FormattedText caption, List<MaxAttachmentRequest>? attachments, string? replyMid,
+        bool disableLinkPreview, CancellationToken ct)
     {
         var (text, format) = MaxFormatting.ToRequestText(caption);
         var body = new MaxSendMessageRequest
@@ -329,7 +331,7 @@ public sealed class MaxApiClient : IMessengerApiClient
             Link = string.IsNullOrEmpty(replyMid) ? null : new MaxNewMessageLink { Type = "reply", Mid = replyMid }
         };
 
-        var url = $"{BaseUrl}/messages?chat_id={chatId}";
+        var url = $"{BaseUrl}/messages?chat_id={chatId}{LinkPreviewQuery(disableLinkPreview)}";
         for (var attempt = 1; ; attempt++)
         {
             using var response = await _http.PostAsJsonAsync(url, body, ct);
@@ -360,17 +362,21 @@ public sealed class MaxApiClient : IMessengerApiClient
     /// медиа, дотягиваем текущие вложения сообщения (GET) и переотправляем их по token.
     /// Ошибки (в т.ч. истёкшее окно редактирования) логируются, не пробрасываются.
     /// </summary>
-    public async Task EditChatMessageAsync(string chatId, string messageId, FormattedText caption, bool isMediaCaption, CancellationToken ct)
+    public async Task EditChatMessageAsync(
+        string chatId, string messageId, FormattedText caption, bool isMediaCaption, bool disableLinkPreview,
+        CancellationToken ct)
     {
         var (text, format) = MaxFormatting.ToRequestText(caption);
         var body = new MaxSendMessageRequest
         {
             Text = string.IsNullOrEmpty(text) ? null : text,
             Format = format,
-            Attachments = await KeepExistingAttachmentsAsync(messageId, ct)
+            // У текстового сообщения дотягивать нечего — лишний GET на каждую правку заметен,
+            // когда сообщение переписывается часто (статус загрузки видео).
+            Attachments = isMediaCaption ? await KeepExistingAttachmentsAsync(messageId, ct) : null
         };
 
-        var url = $"{BaseUrl}/messages?message_id={messageId}";
+        var url = $"{BaseUrl}/messages?message_id={messageId}{LinkPreviewQuery(disableLinkPreview)}";
         try
         {
             using var response = await _http.PutAsJsonAsync(url, body, ct);
@@ -385,6 +391,101 @@ public sealed class MaxApiClient : IMessengerApiClient
             _logger.LogWarning(ex, "MAX: ошибка редактирования сообщения {Mid}.", messageId);
         }
     }
+
+    /// <summary>
+    /// Заменяет содержимое сообщения на медиа: загружает файл обычным upload-flow и правит
+    /// сообщение (PUT /messages?message_id=), подставляя новое вложение вместо прежних.
+    ///
+    /// Успешный ответ на PUT сам по себе ничего не гарантирует: свежезагруженное видео сервер
+    /// обрабатывает не мгновенно, и на правку с ещё не готовым вложением MAX отвечает 200,
+    /// молча оставляя сообщение без него (в отличие от отправки, где тот же случай даёт 400 и
+    /// ловится ретраем). Поэтому после каждой попытки сообщение перечитывается, и правка
+    /// повторяется, пока вложение действительно не появится. false — заменить не удалось:
+    /// вызывающий отправит содержимое отдельным сообщением.
+    /// </summary>
+    public async Task<bool> TryReplaceChatMessageMediaAsync(
+        string chatId, string messageId, MediaAttachment media, FormattedText caption, CancellationToken ct)
+    {
+        var (text, format) = MaxFormatting.ToRequestText(caption);
+        var url = $"{BaseUrl}/messages?message_id={messageId}";
+
+        try
+        {
+            var attach = await UploadAsync(MapType(media.Kind), media.FilePath, media.FileName, media.MimeType, ct);
+            var body = new MaxSendMessageRequest
+            {
+                Text = string.IsNullOrEmpty(text) ? null : text,
+                Format = format,
+                Attachments = [attach]
+            };
+
+            for (var attempt = 1; attempt <= SendAttempts; attempt++)
+            {
+                using var response = await _http.PutAsJsonAsync(url, body, ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    // 400 — вложение ещё не обработано, ровно как при отправке.
+                    if ((int)response.StatusCode == 400 && attempt < SendAttempts)
+                    {
+                        await Task.Delay(SendRetryDelay, ct);
+                        continue;
+                    }
+
+                    var err = await response.Content.ReadAsStringAsync(ct);
+                    _logger.LogWarning("MAX: не удалось заменить содержимое сообщения {Mid} ({Status}): {Body}",
+                        messageId, response.StatusCode, err);
+                    return false;
+                }
+
+                if (await HasAttachmentsAsync(messageId, ct))
+                    return true;
+
+                if (attempt < SendAttempts)
+                    await Task.Delay(SendRetryDelay, ct);
+            }
+
+            _logger.LogWarning(
+                "MAX: правка сообщения {Mid} принята, но вложение {Kind} за {Attempts} попыток так и не появилось.",
+                messageId, media.Kind, SendAttempts);
+            return false;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "MAX: ошибка замены содержимого сообщения {Mid} на {Kind}.", messageId, media.Kind);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Есть ли у сообщения хоть одно вложение — проверка «правка действительно применилась».
+    /// Намеренно не смотрит на тип и token вложения: нужен только факт, что сообщение перестало
+    /// быть текстовым. Ошибка запроса считается «нет» — лучше отправить видео отдельным
+    /// сообщением, чем оставить в чате вечное «отправляется…».
+    /// </summary>
+    private async Task<bool> HasAttachmentsAsync(string messageId, CancellationToken ct)
+    {
+        try
+        {
+            var raw = await _http.GetStringAsync($"{BaseUrl}/messages?message_ids={messageId}", ct);
+            var message = string.IsNullOrWhiteSpace(raw)
+                ? null
+                : JsonSerializer.Deserialize<MaxMessagesResponse>(raw)?.Messages?.FirstOrDefault();
+
+            return message?.Body?.Attachments is { Count: > 0 };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "MAX: не удалось проверить вложения сообщения {Mid} после правки.", messageId);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Query-параметр отключения превью ссылок. Как и остальные части MAX API (см. примечание
+    /// в MaxModels.cs), заполнен по типовому шаблону Bot API; неизвестный параметр сервер
+    /// игнорирует, поэтому в худшем случае превью просто останется.
+    /// </summary>
+    private static string LinkPreviewQuery(bool disabled) => disabled ? "&disable_link_preview=true" : string.Empty;
 
     public async Task DeleteChatMessageAsync(string chatId, string messageId, CancellationToken ct)
     {

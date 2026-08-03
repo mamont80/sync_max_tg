@@ -67,6 +67,13 @@ public sealed class RelayMessage
     /// <summary>Id сообщения в ЦЕЛЕВОМ чате, на которое надо оформить ответ (проставляет relay).</summary>
     public string? ReplyToTargetMessageId { get; init; }
 
+    /// <summary>
+    /// Не разворачивать превью ссылок в сообщении. Нужно служебным сообщениям вроде статуса
+    /// «видео из ссылок»: ссылка в них повторяет ту, что уже развёрнута в пересланном
+    /// оригинале прямо над ними, а сам статус вот-вот станет самим видео.
+    /// </summary>
+    public bool DisableLinkPreview { get; init; }
+
     public bool HasMedia => Attachments.Count > 0;
 
     /// <summary>Есть ли что пересылать вообще (хоть текст, хоть вложение).</summary>

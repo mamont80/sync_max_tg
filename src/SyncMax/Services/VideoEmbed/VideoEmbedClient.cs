@@ -13,9 +13,12 @@ namespace SyncMax.Services.VideoEmbed;
 /// дальше нужно поллить статус, пока он не станет completed/failed, и только тогда скачивать
 /// файл по <c>downloadUrl</c>. Никаких push-уведомлений сервис не даёт.
 ///
-/// Любая неудача (сеть, таймаут, ошибка сервиса, невалидная ссылка) возвращает null — это
-/// опциональное дополнение к пересылке, а не критичная часть, поэтому здесь никогда не
-/// бросаем исключения наружу, только логируем.
+/// Каждый опрос отдаётся наружу колбэком <c>onProgress</c>: пока идёт скачивание, вызывающий
+/// показывает этап и проценты в статусном сообщении чата (см. <see cref="VideoEmbedRelayService"/>).
+///
+/// Любая неудача (сеть, таймаут, ошибка сервиса, невалидная ссылка) возвращается кодом причины
+/// в <see cref="VideoDownloadResult.ErrorCode"/> — это опциональное дополнение к пересылке,
+/// а не критичная часть, поэтому исключения наружу отсюда никогда не выходят.
 /// </summary>
 public sealed class VideoEmbedClient
 {
@@ -43,43 +46,49 @@ public sealed class VideoEmbedClient
 
     /// <summary>
     /// Ставит ссылку в очередь на скачивание, дожидается результата и скачивает готовый файл
-    /// во временный файл на диске (см. <see cref="TempFiles"/>). null — сервис не настроен,
-    /// ссылка не распознана, видео недоступно/слишком длинное/большое, очередь переполнена
-    /// или не удалось дождаться за <see cref="VideoEmbedOptions.MaxWaitSeconds"/>. Причина
-    /// в обоих случаях уходит только в лог — вызывающий код молча пропускает функцию.
+    /// во временный файл на диске (см. <see cref="TempFiles"/>). При неудаче (видео недоступно,
+    /// слишком длинное/большое, очередь переполнена, сервис не ответил, не дождались за
+    /// <see cref="VideoEmbedOptions.MaxWaitSeconds"/>) возвращает код причины вместо пути.
+    /// <paramref name="onProgress"/> вызывается на каждом опросе статуса; его ошибки
+    /// подавляются — показ хода работы не повод бросать саму загрузку.
     /// </summary>
-    public async Task<string?> TryDownloadAsync(string url, CancellationToken ct)
+    public async Task<VideoDownloadResult> TryDownloadAsync(
+        string url, Func<VideoTaskProgress, CancellationToken, Task>? onProgress, CancellationToken ct)
     {
         if (!IsConfigured)
-            return null;
+            return VideoDownloadResult.Failed(VideoEmbedErrors.ServiceError);
 
         try
         {
-            var taskId = await SubmitAsync(url, ct);
-            return taskId is null ? null : await PollAndDownloadAsync(taskId, url, ct);
+            var (taskId, submitError) = await SubmitAsync(url, ct);
+            return taskId is null
+                ? VideoDownloadResult.Failed(submitError ?? VideoEmbedErrors.ServiceError)
+                : await PollAndDownloadAsync(taskId, url, onProgress, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Видео-сервис: не удалось обработать ссылку {Url}.", url);
-            return null;
+            return VideoDownloadResult.Failed(VideoEmbedErrors.ServiceError);
         }
     }
 
-    private async Task<string?> SubmitAsync(string url, CancellationToken ct)
+    private async Task<(string? TaskId, string? ErrorCode)> SubmitAsync(string url, CancellationToken ct)
     {
         using var response = await _http.PostAsJsonAsync("/api/v1/tasks", new { url }, JsonOptions, ct);
 
         if (response.StatusCode != System.Net.HttpStatusCode.Accepted)
         {
-            _logger.LogInformation("Видео-сервис: POST /tasks для {Url} вернул {Status}.", url, response.StatusCode);
-            return null;
+            var body = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogWarning("Видео-сервис: POST /tasks для {Url} вернул {Status}: {Body}", url, response.StatusCode, body);
+            return (null, ParseErrorCode(body));
         }
 
         var created = await response.Content.ReadFromJsonAsync<TaskCreatedResponse>(JsonOptions, ct);
-        return created?.TaskId;
+        return (created?.TaskId, created?.TaskId is null ? VideoEmbedErrors.ServiceError : null);
     }
 
-    private async Task<string?> PollAndDownloadAsync(string taskId, string url, CancellationToken ct)
+    private async Task<VideoDownloadResult> PollAndDownloadAsync(
+        string taskId, string url, Func<VideoTaskProgress, CancellationToken, Task>? onProgress, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow.AddSeconds(_options.MaxWaitSeconds);
         var pollInterval = TimeSpan.FromSeconds(Math.Max(1, _options.PollIntervalSeconds));
@@ -91,27 +100,95 @@ public sealed class VideoEmbedClient
             using var response = await _http.GetAsync($"/api/v1/tasks/{taskId}", ct);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogInformation("Видео-сервис: опрос задачи {TaskId} ({Url}) вернул {Status}.",
+                _logger.LogWarning("Видео-сервис: опрос задачи {TaskId} ({Url}) вернул {Status}.",
                     taskId, url, response.StatusCode);
-                return null;
+                return VideoDownloadResult.Failed(VideoEmbedErrors.ServiceError);
             }
 
             var status = await response.Content.ReadFromJsonAsync<TaskStatusResponse>(JsonOptions, ct);
             switch (status?.Status)
             {
                 case "completed" when status.DownloadUrl is { Length: > 0 } downloadUrl:
-                    return await DownloadFileAsync(downloadUrl, ct);
+                    await ReportAsync(onProgress, new VideoTaskProgress(VideoTaskStage.Uploading, null), ct);
+                    var path = await DownloadFileAsync(downloadUrl, ct);
+                    return path is null
+                        ? VideoDownloadResult.Failed(VideoEmbedErrors.ServiceError)
+                        : VideoDownloadResult.Ok(path);
+
+                // completed без downloadUrl — сервис противоречит сам себе; ждать нечего.
+                case "completed":
+                    _logger.LogWarning("Видео-сервис: задача {TaskId} ({Url}) завершена без downloadUrl.", taskId, url);
+                    return VideoDownloadResult.Failed(VideoEmbedErrors.ServiceError);
+
                 case "failed":
-                    _logger.LogInformation("Видео-сервис: задача {TaskId} ({Url}) завершилась ошибкой {Code}: {Message}",
+                    _logger.LogWarning("Видео-сервис: задача {TaskId} ({Url}) завершилась ошибкой {Code}: {Message}",
                         taskId, url, status.Error?.Code, status.Error?.Message);
-                    return null;
-                // queued/running — продолжаем поллинг.
+                    return VideoDownloadResult.Failed(status.Error?.Code ?? VideoEmbedErrors.ServiceError);
+
+                default:
+                    // queued/running — продолжаем поллинг, попутно отдавая этап наружу.
+                    await ReportAsync(onProgress, ToProgress(status), ct);
+                    break;
             }
         }
 
-        _logger.LogInformation("Видео-сервис: задача {TaskId} ({Url}) не завершилась за {Seconds} с.",
+        _logger.LogWarning("Видео-сервис: задача {TaskId} ({Url}) не завершилась за {Seconds} с.",
             taskId, url, _options.MaxWaitSeconds);
-        return null;
+        return VideoDownloadResult.Failed(VideoEmbedErrors.Timeout);
+    }
+
+    /// <summary>
+    /// Этап и проценты для показа пользователю. Поле <c>phase</c> у сервиса появилось позже
+    /// самой функции, поэтому его отсутствие — не ошибка: старый сервис различает только
+    /// «в очереди» и «в работе», и статус тогда показывается без деталей.
+    /// </summary>
+    private static VideoTaskProgress ToProgress(TaskStatusResponse? status)
+    {
+        var stage = status?.Phase switch
+        {
+            "queued" => VideoTaskStage.Queued,
+            "probing" => VideoTaskStage.Probing,
+            "downloading" => VideoTaskStage.DownloadSource,
+            "converting" or "done" => VideoTaskStage.Converting,
+            _ => status?.Status == "running" ? VideoTaskStage.DownloadSource : VideoTaskStage.Queued
+        };
+
+        return new VideoTaskProgress(stage, stage == VideoTaskStage.DownloadSource ? status?.Progress : null);
+    }
+
+    private async Task ReportAsync(
+        Func<VideoTaskProgress, CancellationToken, Task>? onProgress, VideoTaskProgress progress, CancellationToken ct)
+    {
+        if (onProgress is null)
+            return;
+
+        try
+        {
+            await onProgress(progress, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Видео-сервис: не удалось показать ход загрузки ({Stage}).", progress.Stage);
+        }
+    }
+
+    /// <summary>Код причины из тела ответа сервиса; если тело не разобрать — по HTTP-статусу.</summary>
+    private static string ParseErrorCode(string body)
+    {
+        try
+        {
+            var error = string.IsNullOrWhiteSpace(body)
+                ? null
+                : JsonSerializer.Deserialize<TaskErrorEnvelope>(body, JsonOptions);
+            if (error?.Error?.Code is { Length: > 0 } code)
+                return code;
+        }
+        catch (JsonException)
+        {
+            // Не JSON — значит, отвечал не сам сервис (прокси, заглушка): причина неизвестна.
+        }
+
+        return VideoEmbedErrors.ServiceError;
     }
 
     private async Task<string?> DownloadFileAsync(string downloadUrl, CancellationToken ct)
@@ -138,7 +215,12 @@ public sealed class VideoEmbedClient
 
     private sealed record TaskStatusResponse(
         [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("phase")] string? Phase,
+        [property: JsonPropertyName("progress")] int? Progress,
         [property: JsonPropertyName("downloadUrl")] string? DownloadUrl,
+        [property: JsonPropertyName("error")] TaskErrorResponse? Error);
+
+    private sealed record TaskErrorEnvelope(
         [property: JsonPropertyName("error")] TaskErrorResponse? Error);
 
     private sealed record TaskErrorResponse(

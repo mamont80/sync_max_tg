@@ -8,17 +8,25 @@ namespace SyncMax.Services.VideoEmbed;
 /// <summary>
 /// Опциональное дополнение к обычной пересылке (см. <see cref="MessageRelayService"/>): если в
 /// сообщении есть ссылка на YouTube-видео/Shorts, скачивает само видео через внешний сервис
-/// (<see cref="VideoEmbedClient"/>) и публикует его отдельным сообщением в оба чата связки —
-/// и в тот, откуда пришло сообщение, и в связанный, — чтобы по обе стороны видео можно было
-/// посмотреть не переходя по ссылке.
+/// (<see cref="VideoEmbedClient"/>) и публикует его в оба чата связки — и в тот, откуда пришло
+/// сообщение, и в связанный, — чтобы по обе стороны видео можно было посмотреть не переходя
+/// по ссылке.
 ///
-/// Запускается в фоне, не блокируя основную пересылку: скачивание может занимать от секунд
-/// до нескольких минут (очередь на сервисе, скачивание, конвертация), и ждать этого на
-/// горячем пути (последовательная обработка апдейтов в *BotService) значило бы задерживать
-/// обработку следующих сообщений того же бота. Поэтому <see cref="TryRelayInBackground"/>
-/// только проверяет условия и синхронно возвращает управление, а вся работа уходит в
-/// отдельную задачу; любая ошибка там — не более чем потерянное необязательное сообщение,
-/// наружу не пробрасывается.
+/// Порядок в чате важен и задан жёстко: сначала уходит сам репост оригинала (его этот сервис
+/// не касается — <see cref="TryRelayInBackground"/> вызывается уже ПОСЛЕ отправки), затем
+/// сразу же — статусное сообщение, которое занимает место в ленте и показывает ход загрузки
+/// («в очереди», «скачивается 45%»), и в него же по готовности встаёт само видео
+/// (<see cref="VideoEmbedStatusBoard"/>). Публиковать видео «когда скачается» отдельным
+/// сообщением нельзя: за минуты загрузки чат уходит вперёд, и видео теряет связь с ссылкой.
+///
+/// Вся работа идёт в фоне, не блокируя пересылку: скачивание может занимать от секунд до
+/// нескольких минут (очередь на сервисе, скачивание, конвертация), и ждать этого на горячем
+/// пути (последовательная обработка апдейтов в *BotService) значило бы задерживать обработку
+/// следующих сообщений того же бота. Поэтому <see cref="TryRelayInBackground"/> только
+/// проверяет условия и уводит всё остальное — включая отправку статусного сообщения — в
+/// <see cref="Task.Run(Func{Task}, CancellationToken)"/>, чтобы на вызывающем потоке не
+/// осталось даже начала запроса; любая ошибка там — не более чем потерянное необязательное
+/// сообщение, наружу не пробрасывается.
 ///
 /// Фоновая задача намеренно берёт токен отмены из <see cref="IHostApplicationLifetime"/>, а не
 /// токен вызывающего: в режиме Webhook это <c>HttpContext.RequestAborted</c>, который отменяется
@@ -44,9 +52,10 @@ public sealed class VideoEmbedRelayService
 
     /// <summary>
     /// Проверяет условия (связка допускает фичу, сервис настроен, в тексте есть ссылка) и, если
-    /// они выполнены, запускает обработку в фоне. Вызывать только для сообщений, для которых
-    /// обычная пересылка уже разрешена (модерацией не заблокирована, направление связки
-    /// проверено вызывающим) — этот метод сам направление не проверяет.
+    /// они выполнены, запускает обработку в фоне. Вызывать только ПОСЛЕ того, как сам оригинал
+    /// уже переслан, и только для сообщений, для которых пересылка разрешена (модерацией не
+    /// заблокирована, направление связки проверено вызывающим) — этот метод сам направление
+    /// не проверяет.
     /// </summary>
     public void TryRelayInBackground(
         ChatLink link, MessengerType source, string sourceChatId, string? senderName, FormattedText originalCaption)
@@ -58,35 +67,47 @@ public sealed class VideoEmbedRelayService
         if (url is null)
             return;
 
-        _ = RunAsync(link, source, sourceChatId, senderName, url, _appStopping);
+        _ = Task.Run(() => RunAsync(link, source, sourceChatId, senderName, url, _appStopping), CancellationToken.None);
     }
 
     private async Task RunAsync(
         ChatLink link, MessengerType source, string sourceChatId, string? senderName, string url, CancellationToken ct)
     {
         string? filePath = null;
+        VideoEmbedStatusBoard? board = null;
         try
         {
-            filePath = await _client.TryDownloadAsync(url, ct);
-            if (filePath is null)
+            var caption = VideoEmbedTexts.Caption(source, senderName, url);
+            board = await VideoEmbedStatusBoard.PostAsync(
+                Targets(link, source, sourceChatId), caption, VideoEmbedTexts.QueuedLine, _logger, ct);
+
+            var result = await _client.TryDownloadAsync(
+                url, (progress, token) => board.ShowAsync(VideoEmbedTexts.StatusLine(progress), token), ct);
+
+            if (result.FilePath is not { } path)
+            {
+                await board.FailAsync(result.ErrorCode, ct);
+                _logger.LogWarning("Видео-функция: видео по ссылке {Url} не получено ({Code}).", url, result.ErrorCode);
                 return;
+            }
 
-            var targetMessenger = source == MessengerType.Max ? MessengerType.Telegram : MessengerType.Max;
-            var targetChatId = source == MessengerType.Max ? link.TgChatId : link.MaxChatId;
-            var message = BuildMessage(source, senderName, url, filePath);
+            filePath = path;
+            var delivered = await board.PublishAsync(new MediaAttachment { Kind = MediaKind.Video, FilePath = path }, ct);
 
-            if (_clients.TryGetValue(source, out var sourceClient))
-                await sourceClient.SendChatMessageAsync(sourceChatId, message, ct);
-
-            if (_clients.TryGetValue(targetMessenger, out var targetClient))
-                await targetClient.SendChatMessageAsync(targetChatId, message, ct);
-
-            _logger.LogInformation("Видео-функция: ссылка {Url} из {Messenger}:{ChatId} разослана в оба чата связки {LinkId}.",
-                url, source, sourceChatId, link.Id);
+            if (delivered)
+                _logger.LogInformation("Видео-функция: ссылка {Url} из {Messenger}:{ChatId} разослана в оба чата связки {LinkId}.",
+                    url, source, sourceChatId, link.Id);
+            else
+                _logger.LogWarning("Видео-функция: видео по ссылке {Url} (связка {LinkId}) дошло не во все чаты — подробности выше.",
+                    url, link.Id);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Видео-функция: не удалось разослать видео по ссылке {Url}.", url);
+
+            // Статусное сообщение уже висит в чатах — оставлять его с «скачивается…» нельзя.
+            if (board is not null)
+                await board.FailAsync(VideoEmbedErrors.ServiceError, CancellationToken.None);
         }
         finally
         {
@@ -94,22 +115,17 @@ public sealed class VideoEmbedRelayService
         }
     }
 
-    private static RelayMessage BuildMessage(MessengerType source, string? senderName, string url, string filePath)
+    /// <summary>Оба чата связки: тот, откуда пришла ссылка, и связанный с ним.</summary>
+    private IEnumerable<(IMessengerApiClient Client, string ChatId)> Targets(
+        ChatLink link, MessengerType source, string sourceChatId)
     {
-        var sourceTag = source == MessengerType.Max ? "MAX" : "TG";
-        var header = string.IsNullOrWhiteSpace(senderName)
-            ? $"🎬 Видео по ссылке · (из {sourceTag})"
-            : $"🎬 Видео по ссылке от {senderName} · (из {sourceTag})";
-        var text = $"{header}\n{url}";
+        var targetMessenger = source == MessengerType.Max ? MessengerType.Telegram : MessengerType.Max;
+        var targetChatId = source == MessengerType.Max ? link.TgChatId : link.MaxChatId;
 
-        return new RelayMessage
-        {
-            Caption = new FormattedText
-            {
-                Text = text,
-                Spans = [new TextSpan { Kind = TextSpanKind.Link, Offset = header.Length + 1, Length = url.Length, Url = url }]
-            },
-            Attachments = [new MediaAttachment { Kind = MediaKind.Video, FilePath = filePath }]
-        };
+        if (_clients.TryGetValue(source, out var sourceClient))
+            yield return (sourceClient, sourceChatId);
+
+        if (_clients.TryGetValue(targetMessenger, out var targetClient))
+            yield return (targetClient, targetChatId);
     }
 }

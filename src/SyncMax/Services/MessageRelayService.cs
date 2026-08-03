@@ -114,11 +114,6 @@ public sealed class MessageRelayService
                     messenger, senderName, verdict.Decision == ModerationDecision.Masked, message.Forward);
                 var prefix = string.IsNullOrEmpty(verdict.Text.Text) ? header : header.WithSuffix("\n");
                 payload = message.WithModeratedCaption(verdict.Text).WithCaptionPrefix(prefix, targetReplyId);
-
-                // Опциональная функция «видео из ссылок» — по исходному (не промодерированному)
-                // тексту: ссылка модерацией не трогается, а маскировка мата урезала бы её только
-                // случайно. Запускается в фоне и не влияет на время обработки этого сообщения.
-                _videoEmbed.TryRelayInBackground(link, messenger, chatId, senderName, message.Caption);
             }
 
             // Объём вложений снимаем ДО отправки: в finally временные файлы удаляются, а по
@@ -128,6 +123,14 @@ public sealed class MessageRelayService
             var sizes = MeasureAttachments(payload.Attachments);
 
             var sentId = await client.SendChatMessageAsync(targetChatId, payload, ct);
+
+            // Опциональная функция «видео из ссылок» — строго ПОСЛЕ отправки самого репоста:
+            // она заводит в обоих чатах своё статусное сообщение, и оно должно встать в ленту
+            // после оригинала, а не перед ним. Текст берётся исходный, не промодерированный:
+            // ссылка модерацией не трогается, а маскировка мата урезала бы её только случайно.
+            // Работа уходит в фон и на время обработки этого сообщения не влияет.
+            if (verdict.Decision != ModerationDecision.Blocked)
+                _videoEmbed.TryRelayInBackground(link, messenger, chatId, senderName, message.Caption);
 
             // Статистика — после успешной отправки и без похода в БД: накопитель складывает
             // всё в памяти, а на диск это уходит пачкой раз в несколько минут.
@@ -251,7 +254,8 @@ public sealed class MessageRelayService
             payload = verdict.Text.WithPrefix(prefix);
         }
 
-        await client.EditChatMessageAsync(cp.ChatId, cp.MsgId, payload, sourceHasMedia, ct);
+        await client.EditChatMessageAsync(
+            cp.ChatId, cp.MsgId, payload, sourceHasMedia, disableLinkPreview: false, ct);
         _logger.LogInformation("Перенесена правка {FromMessenger}:{FromMsg} -> {ToMessenger}:{ToMsg}.",
             messenger, sourceMsgId, targetMessenger, cp.MsgId);
     }
